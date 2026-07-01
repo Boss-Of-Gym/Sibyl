@@ -1,0 +1,40 @@
+# AI orchestration / internal process scaffolding — kept locally to drive the
+# engineering process, deliberately not published to the public repo: these files
+# explicitly describe an LLM roleplaying an engineering org (and, for PROGRESS.md,
+# log that roleplay session by session), which would undercut the impression the
+# repo is meant to give. They still work locally (Claude Code reads them from disk
+# regardless of git tracking) — cloning this repo elsewhere just won't carry them
+# along, and status/process claims in the public README are worded accordingly.
+MASTER_PROMPT.md
+CLAUDE.md
+PROGRESS.md
+docs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Testing & tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
