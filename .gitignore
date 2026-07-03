@@ -5,10 +5,15 @@
 # repo is meant to give. They still work locally (Claude Code reads them from disk
 # regardless of git tracking) — cloning this repo elsewhere just won't carry them
 # along, and status/process claims in the public README are worded accordingly.
+# NOTE: docs/ itself is intentionally NOT excluded — the Stage 1-10 documentation,
+# ADRs, and sub-stage READMEs are the actual deliverable this project's process is
+# meant to demonstrate; only the roleplay/log meta-files above are hidden.
 MASTER_PROMPT.md
 CLAUDE.md
 PROGRESS.md
-docs/
+
+# Personal, Russian-language step-by-step journal for the user — not for publication.
+ЖУРНАЛ_РАЗРАБОТКИ.md
 
 # Python
 __pycache__/

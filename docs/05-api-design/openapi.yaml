@@ -1,0 +1,925 @@
+openapi: 3.1.0
+info:
+  title: Sibyl API
+  version: "1.0"
+  summary: Engineering Intelligence Platform — MVP API (PR Analysis, Test Impact Analysis, Flaky Detection, Root Cause Analysis)
+  description: >
+    Read-only analysis API plus the GitHub webhook ingestion endpoint. This API is
+    the second surface after GitHub-native PR checks/comments (Stage 2 decision) —
+    it does not re-expose data GitHub already serves (PR metadata, diffs); it only
+    exposes Sibyl's derived analysis. All resources are addressed by owner/repo,
+    matching GitHub's own convention; internal `installation_id` scoping (Stage 4)
+    is resolved server-side and never appears in the public contract.
+servers:
+  - url: https://api.sibyl.dev/v1
+    description: Placeholder production URL — finalized at Stage 7 (Infrastructure)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /webhooks/github:
+    post:
+      operationId: receiveGitHubWebhook
+      summary: GitHub webhook ingestion endpoint (Ingestion bounded context)
+      description: >
+        Entry point for all GitHub App webhook deliveries. Authenticated via HMAC
+        signature verification (`X-Hub-Signature-256`), not bearer auth — this
+        endpoint is excluded from the `bearerAuth` security requirement.
+        Deduplicated by `X-GitHub-Delivery` per the Stage 4 `ingestion.webhook_delivery`
+        dedup record and the Redis fast-path dedup check.
+      security: []
+      parameters:
+        - name: X-Hub-Signature-256
+          in: header
+          required: true
+          schema:
+            type: string
+          description: HMAC-SHA256 signature of the payload, verified against the GitHub App's webhook secret.
+        - name: X-GitHub-Delivery
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: X-GitHub-Event
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: [pull_request, check_suite, workflow_run, installation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Raw GitHub webhook payload (shape depends on X-GitHub-Event).
+      responses:
+        "202":
+          description: Accepted for async processing (published to the Ingestion Kafka topics).
+        "400":
+          description: Malformed payload.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: Invalid or missing HMAC signature.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /ingest/test-results:
+    post:
+      operationId: ingestTestResults
+      summary: CI-reported per-test results (Ingestion bounded context — added at Stage 9.2)
+      description: >
+        Called directly by a CI job (e.g. a step in the repository's own workflow)
+        after a test run completes — not a GitHub webhook. GitHub's native
+        check_suite/workflow_run webhooks only carry a suite-level conclusion, not
+        per-test results, so per-test data (required by the Stage 4
+        `test_case_result` schema) must be reported by the CI job itself. Added
+        during Stage 9.2 implementation; see `docs/05-api-design/README.md`
+        addendum and `docs/04-database/README.md` addendum for the full rationale.
+      security:
+        - bearerAuth: [write:test-results]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestResultReport"
+      responses:
+        "202":
+          description: Accepted for async processing (published to ingestion.ci-run-completed).
+        "400":
+          description: Malformed report.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: No installation found matching the report's repository.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /ingest/coverage-report:
+    post:
+      operationId: ingestCoverageReport
+      summary: CI-reported per-file coverage (Ingestion bounded context — added at Stage 9.4)
+      description: >
+        Called directly by a CI job after a test run completes, same pattern as
+        `POST /ingest/test-results` (Stage 9.2) — a separate endpoint/topic rather
+        than folding coverage into the test-results payload, so a CI job that only
+        reports coverage doesn't have to fabricate a per-test breakdown. See
+        `docs/04-database/README.md` and `docs/05-api-design/README.md` Stage 9.4
+        addenda for the full rationale.
+      security:
+        - bearerAuth: [write:coverage-reports]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CoverageReport"
+      responses:
+        "202":
+          description: Accepted for async processing (published to ingestion.coverage-report-received).
+        "400":
+          description: Malformed report.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: Token's installation_id claim does not match the installation resolved from the report's repository.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: No installation found matching the report's repository.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /ingest/dependency-manifest:
+    post:
+      operationId: ingestDependencyManifest
+      summary: CI-reported dependency manifest (Ingestion bounded context — added at Stage 9.6)
+      description: >
+        Called directly by a CI job, same pattern as `POST /ingest/test-results`
+        (Stage 9.2) and `POST /ingest/coverage-report` (Stage 9.4). The CI job
+        parses its own package.json/requirements.txt/go.mod/etc. into this
+        normalized shape — this endpoint never parses a real manifest format
+        itself. Unlike the other two ingest endpoints, this one feeds a new
+        bounded context (Dependency Analysis), not Test Intelligence — see the
+        Stage 9.6 ADR-0002 addendum.
+      security:
+        - bearerAuth: [write:dependency-manifests]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DependencyManifestReport"
+      responses:
+        "202":
+          description: Accepted for async processing (published to ingestion.dependency-manifest-received).
+        "400":
+          description: Malformed report.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: Token's installation_id claim does not match the installation resolved from the report's repository.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: No installation found matching the report's repository.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /repositories/{owner}/{repo}/pulls/{prNumber}/pr-analysis:
+    get:
+      operationId: getPrAnalysis
+      summary: PR Analysis result for a pull request
+      tags: [pr-analysis]
+      security:
+        - bearerAuth: [read:pr-analysis]
+      parameters:
+        - $ref: "#/components/parameters/Owner"
+        - $ref: "#/components/parameters/Repo"
+        - $ref: "#/components/parameters/PrNumber"
+      responses:
+        "200":
+          description: The latest PR risk assessment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrAnalysis"
+        "202":
+          description: Analysis has been triggered but is not ready yet.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /repositories/{owner}/{repo}/pulls/{prNumber}/test-impact:
+    get:
+      operationId: getTestImpact
+      summary: Test Impact Analysis result for a pull request
+      tags: [test-intelligence]
+      security:
+        - bearerAuth: [read:test-intelligence]
+      parameters:
+        - $ref: "#/components/parameters/Owner"
+        - $ref: "#/components/parameters/Repo"
+        - $ref: "#/components/parameters/PrNumber"
+      responses:
+        "200":
+          description: The set of tests this PR is predicted to affect.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestImpact"
+        "202":
+          description: Analysis has been triggered but is not ready yet.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /repositories/{owner}/{repo}/tests/{testIdentifier}/stability:
+    get:
+      operationId: getTestStability
+      summary: Flaky Detection signal for a specific test
+      tags: [test-intelligence]
+      security:
+        - bearerAuth: [read:test-intelligence]
+      parameters:
+        - $ref: "#/components/parameters/Owner"
+        - $ref: "#/components/parameters/Repo"
+        - name: testIdentifier
+          in: path
+          required: true
+          schema:
+            type: string
+          description: >-
+            Stable identifier for the test (e.g. `tests/test_checkout.py::test_applies_discount`).
+            This identifier routinely contains literal `/` characters, so the server matches it as a
+            greedy path segment (everything between `/tests/` and the trailing `/stability`) rather
+            than a single path component. Clients must send the raw identifier unencoded, not
+            percent-encode its `/` characters.
+      responses:
+        "200":
+          description: Current flakiness signal for this test.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestStabilitySignal"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /repositories/{owner}/{repo}/ci-cd/slow-tests:
+    get:
+      operationId: listSlowTests
+      summary: Consistently slow, non-flaky tests ranked by median duration (Stage 9.5 addendum)
+      tags: [ci-cd-optimization]
+      security:
+        - bearerAuth: [read:test-intelligence]
+      parameters:
+        - $ref: "#/components/parameters/Owner"
+        - $ref: "#/components/parameters/Repo"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: >-
+            Top-N cap, not cursor-paginated like the other 2 list endpoints — this
+            is a bounded ranking (the N slowest tests), not an arbitrarily-growing
+            collection, so a cursor has nothing to page through.
+      responses:
+        "200":
+          description: Slow tests for this repository, ordered by median duration descending.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SlowTestEntry"
+
+  /repositories/{owner}/{repo}/coverage/gaps:
+    get:
+      operationId: listCoverageGaps
+      summary: Recently-changed files ranked by coverage gap severity (Stage 9.4 addendum)
+      description: >
+        Files that appeared in a changed-file list across the repository's most
+        recent PRs, ranked by how big a coverage gap they represent. Files with
+        no coverage data at all are ranked first (most severe — an unknown gap
+        on actively-changed code), followed by files with a known coverage
+        percentage, ascending. This is deliberately not a raw coverage-percentage
+        report — an untouched file with low coverage isn't interesting, per
+        Stage 9's own framing of this capability.
+      tags: [coverage-intelligence]
+      security:
+        - bearerAuth: [read:test-intelligence]
+      parameters:
+        - $ref: "#/components/parameters/Owner"
+        - $ref: "#/components/parameters/Repo"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: >-
+            Top-N cap, not cursor-paginated — same reasoning as
+            `GET .../ci-cd/slow-tests` (Stage 9.5 addendum).
+      responses:
+        "200":
+          description: Coverage gaps for this repository, most severe first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CoverageGapEntry"
+
+  /repositories/{owner}/{repo}/dependencies:
+    get:
+      operationId: listDependencyManifests
+      summary: Latest known dependency manifest per ecosystem (Stage 9.6 addendum)
+      description: >
+        Returns the most recently reported manifest snapshot for each ecosystem
+        this repository has reported (a polyglot repo may have more than one,
+        e.g. npm and pypi). No risk scoring, staleness classification, or
+        vulnerability data — none of that has persona evidence yet (see the
+        Stage 9.6 sub-stage doc's honest evidence-tier note); this is
+        deliberately just "what does this repository currently depend on."
+      tags: [dependency-analysis]
+      security:
+        - bearerAuth: [read:dependency-analysis]
+      parameters:
+        - $ref: "#/components/parameters/Owner"
+        - $ref: "#/components/parameters/Repo"
+      responses:
+        "200":
+          description: Latest manifest snapshot per ecosystem.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DependencyManifestSnapshot"
+
+  /repositories/{owner}/{repo}/dependencies/changes:
+    get:
+      operationId: listDependencyChanges
+      summary: Breaking-change detection between the two most recent manifest snapshots (Stage 9.8 addendum)
+      description: >
+        Diffs the two most recently reported manifest snapshots for the given
+        ecosystem and classifies each package change by semver: a major-version
+        bump (or a removed package) is `breaking`; minor/patch bumps and added
+        packages are `nonBreaking`; a version string this endpoint can't parse
+        at least a leading major number from is `unknown`. This is deliberately
+        scoped to dependency-version classification, not literal OpenAPI-spec
+        diffing — see the Stage 9.8 ADR-0002 addendum for why. No diff is
+        stored; this is computed from the two snapshots on every call.
+      tags: [dependency-analysis]
+      security:
+        - bearerAuth: [read:dependency-analysis]
+      parameters:
+        - $ref: "#/components/parameters/Owner"
+        - $ref: "#/components/parameters/Repo"
+        - name: ecosystem
+          in: query
+          required: true
+          schema:
+            type: string
+          description: "Which ecosystem to diff, e.g. npm, pypi — required because a polyglot repo may report more than one."
+      responses:
+        "200":
+          description: Package-level changes between the two most recent snapshots.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DependencyChanges"
+        "404":
+          description: Fewer than two snapshots exist for this repository/ecosystem — nothing to diff yet.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /repositories/{owner}/{repo}/failures/{failureEventId}/root-cause:
+    get:
+      operationId: getRootCauseHypothesis
+      summary: Root Cause Analysis hypothesis for a detected test failure
+      tags: [root-cause-analysis]
+      security:
+        - bearerAuth: [read:root-cause]
+      parameters:
+        - $ref: "#/components/parameters/Owner"
+        - $ref: "#/components/parameters/Repo"
+        - name: failureEventId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The current best hypothesis for this failure's root cause.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RootCauseHypothesis"
+        "202":
+          description: Hypothesis has been requested but is not ready yet (e.g. LLM call in flight or fell back after timeout).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /installations:
+    get:
+      operationId: listInstallations
+      summary: List GitHub App installations the caller has access to
+      tags: [identity-access]
+      security:
+        - bearerAuth: [admin:installations]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Paginated list of installations.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstallationPage"
+
+  /installations/{installationId}/repositories:
+    get:
+      operationId: listInstallationRepositories
+      summary: List repositories enabled for an installation
+      tags: [identity-access]
+      security:
+        - bearerAuth: [admin:installations]
+      parameters:
+        - name: installationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Paginated list of enabled repositories.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepositoryPage"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        JWT scoped per the RBAC catalog in `docs/05-api-design/README.md`
+        (read:pr-analysis, read:test-intelligence, read:root-cause,
+        read:dependency-analysis, admin:installations, write:test-results,
+        write:coverage-reports, write:dependency-manifests). Most scopes are
+        issued after GitHub OAuth login; write:test-results,
+        write:coverage-reports, and write:dependency-manifests are issued to
+        CI jobs specifically (see the Stage 9.2, Stage 9.4, and Stage 9.6
+        addenda in `docs/05-api-design/README.md`).
+
+  parameters:
+    Owner:
+      name: owner
+      in: path
+      required: true
+      schema:
+        type: string
+    Repo:
+      name: repo
+      in: path
+      required: true
+      schema:
+        type: string
+    PrNumber:
+      name: prNumber
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+      description: Opaque pagination cursor from a previous response's `next_cursor`.
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+
+  responses:
+    NotFound:
+      description: No such resource, or no analysis has ever been triggered for it.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+  schemas:
+    Problem:
+      type: object
+      description: RFC 7807 problem+json, with a Sibyl-specific `code` for programmatic handling.
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+        code:
+          type: string
+          description: Stable machine-readable error code, e.g. SIBYL_ANALYSIS_NOT_READY.
+
+    PrAnalysis:
+      type: object
+      required: [prNumber, score, rationale, computedAt]
+      properties:
+        prNumber:
+          type: integer
+        headSha:
+          type: string
+        score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        rationale:
+          type: string
+        contributingFactors:
+          type: array
+          items:
+            type: object
+            properties:
+              factor:
+                type: string
+              weight:
+                type: number
+        llmModel:
+          type: string
+        computedAt:
+          type: string
+          format: date-time
+
+    TestResultItem:
+      type: object
+      required: [testIdentifier, status]
+      properties:
+        testIdentifier:
+          type: string
+        status:
+          type: string
+          enum: [passed, failed, skipped]
+        durationMs:
+          type: integer
+        failureMessage:
+          type: string
+          nullable: true
+
+    TestResultReport:
+      type: object
+      required: [repository, commitSha, ciRunId, tests]
+      properties:
+        repository:
+          type: string
+          description: "owner/repo, used to resolve the installation server-side."
+        commitSha:
+          type: string
+        ciRunId:
+          type: integer
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        tests:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestResultItem"
+
+    TestImpact:
+      type: object
+      required: [prNumber, affectedTests, computedAt]
+      properties:
+        prNumber:
+          type: integer
+        affectedTests:
+          type: array
+          items:
+            type: string
+        computedAt:
+          type: string
+          format: date-time
+
+    TestStabilitySignal:
+      type: object
+      required: [testIdentifier, flakinessScore, sampleSize, lastComputedAt]
+      properties:
+        testIdentifier:
+          type: string
+        flakinessScore:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        sampleSize:
+          type: integer
+        lastComputedAt:
+          type: string
+          format: date-time
+
+    SlowTestEntry:
+      type: object
+      required: [testIdentifier, medianDurationMs, sampleSize, lastComputedAt]
+      properties:
+        testIdentifier:
+          type: string
+        medianDurationMs:
+          type: number
+          format: float
+        sampleSize:
+          type: integer
+        flakinessScore:
+          type: number
+          format: float
+          nullable: true
+          description: >-
+            Null if no stability signal exists yet for this test. Entries whose
+            flakiness score exceeds the server's flaky threshold are excluded from
+            the list entirely, not returned with a high score — a "slow test"
+            worth optimizing is one that is reliably slow, not one that's flaky
+            and coincidentally clocked a slow run.
+        lastComputedAt:
+          type: string
+          format: date-time
+
+    CoverageFileReport:
+      type: object
+      required: [filePath, linesCovered, linesTotal]
+      properties:
+        filePath:
+          type: string
+        linesCovered:
+          type: integer
+        linesTotal:
+          type: integer
+
+    CoverageReport:
+      type: object
+      required: [repository, commitSha, files]
+      properties:
+        repository:
+          type: string
+          description: "owner/repo, used to resolve the installation server-side."
+        commitSha:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/CoverageFileReport"
+
+    CoverageGapEntry:
+      type: object
+      required: [filePath]
+      properties:
+        filePath:
+          type: string
+        coveragePct:
+          type: number
+          format: float
+          nullable: true
+          description: >-
+            Null if this file has no coverage data at all yet — treated as the
+            most severe gap, not omitted or defaulted to 0.
+        linesCovered:
+          type: integer
+          nullable: true
+        linesTotal:
+          type: integer
+          nullable: true
+        lastComputedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    DependencyPackage:
+      type: object
+      required: [name, version, direct]
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        direct:
+          type: boolean
+          description: "false for a transitive (indirect) dependency."
+
+    DependencyManifestReport:
+      type: object
+      required: [repository, commitSha, ecosystem, packages]
+      properties:
+        repository:
+          type: string
+          description: "owner/repo, used to resolve the installation server-side."
+        commitSha:
+          type: string
+        ecosystem:
+          type: string
+          description: "e.g. npm, pypi, go — caller-supplied, not validated against a fixed enum."
+        packages:
+          type: array
+          items:
+            $ref: "#/components/schemas/DependencyPackage"
+
+    DependencyManifestSnapshot:
+      type: object
+      required: [ecosystem, commitSha, packages, receivedAt]
+      properties:
+        ecosystem:
+          type: string
+        commitSha:
+          type: string
+        packages:
+          type: array
+          items:
+            $ref: "#/components/schemas/DependencyPackage"
+        receivedAt:
+          type: string
+          format: date-time
+
+    DependencyChange:
+      type: object
+      required: [name, changeType, severity]
+      properties:
+        name:
+          type: string
+        changeType:
+          type: string
+          enum: [added, removed, version_changed]
+        oldVersion:
+          type: string
+          nullable: true
+        newVersion:
+          type: string
+          nullable: true
+        severity:
+          type: string
+          enum: [breaking, non_breaking, unknown]
+
+    DependencyChanges:
+      type: object
+      required: [ecosystem, fromCommitSha, toCommitSha, changes]
+      properties:
+        ecosystem:
+          type: string
+        fromCommitSha:
+          type: string
+        toCommitSha:
+          type: string
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/DependencyChange"
+
+    RootCauseHypothesis:
+      type: object
+      required: [failureEventId, hypothesisText, confidence, computedAt]
+      properties:
+        failureEventId:
+          type: string
+          format: uuid
+        hypothesisText:
+          type: string
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        suspectedCommitSha:
+          type: string
+        suspectedFilePath:
+          type: string
+        llmModel:
+          type: string
+        computedAt:
+          type: string
+          format: date-time
+
+    Installation:
+      type: object
+      required: [id, organizationLogin, installedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationLogin:
+          type: string
+        installedAt:
+          type: string
+          format: date-time
+
+    InstallationPage:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Installation"
+        nextCursor:
+          type: string
+          nullable: true
+
+    Repository:
+      type: object
+      required: [fullName, enabled]
+      properties:
+        fullName:
+          type: string
+        enabled:
+          type: boolean
+
+    RepositoryPage:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Repository"
+        nextCursor:
+          type: string
+          nullable: true
+
+tags:
+  - name: pr-analysis
+    description: PR Analysis bounded context
+  - name: test-intelligence
+    description: Test Intelligence bounded context (Test Impact Analysis + Flaky Detection + CI/CD Optimization + Coverage Intelligence)
+  - name: ci-cd-optimization
+    description: >-
+      CI/CD Optimization capability (Stage 9.5 addendum) — implemented inside the
+      Test Intelligence bounded context, tagged separately here for API discoverability
+  - name: coverage-intelligence
+    description: >-
+      Coverage Intelligence capability (Stage 9.4 addendum) — implemented inside the
+      Test Intelligence bounded context, tagged separately here for API discoverability
+  - name: root-cause-analysis
+    description: Root Cause Analysis bounded context
+  - name: dependency-analysis
+    description: >-
+      Dependency Analysis bounded context (Stage 9.6 addendum) — a new bounded
+      context, unlike CI/CD Optimization and Coverage Intelligence which both
+      joined Test Intelligence; see the Stage 9.6 ADR-0002 addendum
+  - name: identity-access
+    description: Identity/Access bounded context
