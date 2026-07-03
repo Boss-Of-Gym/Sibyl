@@ -2,10 +2,18 @@
 
 **Ask before you ship.**
 
-> **Status: pre-design (Stage 0 of 10 complete).** This project is being built using
-> an explicit, stage-gated engineering process — see [Project status & process](#project-status--process)
-> before judging it by the (currently empty) `src/` tree. No implementation exists yet
-> by design: see [`docs/00-process/README.md`](docs/00-process/README.md) for why.
+> **Status: Stage 9 in progress — all 4 confirmed-MVP capabilities shipped,
+> plus four Phase 2 capabilities.** Platform Foundation, PR Analysis,
+> Test Impact Analysis, Flaky Detection, Root Cause Analysis, CI/CD
+> Optimization, Coverage Intelligence, Dependency Analysis, and API Evolution
+> Tracking are implemented and tested — 217 tests, 93% coverage, against real
+> Postgres/Redis/Kafka plus contract-tested GitHub API calls.
+> `docker compose up` brings up
+> Postgres/Kafka/Redis and the full observability stack today — see
+> [Project status & process](#project-status--process). This project is built
+> using an explicit, stage-gated engineering process; each capability under
+> `src/sibyl/` only exists once its own Stage 9 sub-stage is `APPROVED` — see
+> [`docs/00-process/README.md`](docs/00-process/README.md) for why.
 
 Sibyl is an open-source **Engineering Intelligence Platform** that analyzes the full
 software development lifecycle —
@@ -28,10 +36,13 @@ evidence for this bet are being developed in
 
 ## Candidate capabilities
 
-These 17 capabilities are the candidate scope explored during Problem/Product
-Discovery. Which ones make the MVP, and in what order the rest ship, is a Stage 2
-decision — see [`docs/02-product-discovery/`](docs/02-product-discovery/README.md) and
-the dependency-ordered build sequence in
+Of these 17 candidates, **PR Analysis, Test Impact Analysis, Flaky Detection, and
+Root Cause Analysis are the confirmed MVP** — the only four directly evidenced by
+real problems identified during Problem Discovery (see
+[`docs/01-problem-discovery/`](docs/01-problem-discovery/README.md)). The rest are
+sequenced into later phases — see
+[`docs/02-product-discovery/`](docs/02-product-discovery/README.md) for the full
+scoring and phasing rationale, and the dependency-ordered build sequence in
 [`docs/09-implementation/README.md`](docs/09-implementation/README.md).
 
 | Category | Capabilities |
@@ -45,11 +56,14 @@ the dependency-ordered build sequence in
 ## Architecture principles (target)
 
 The system is designed to demonstrate, and actually use, rather than merely gesture
-at: Domain-Driven Design, Hexagonal/Clean Architecture, CQRS where it earns its
-complexity, Event-Driven Architecture for ingestion and analysis pipelines, and SOLID
-throughout. Every non-trivial architectural decision is recorded as an ADR under
-`docs/03-architecture/adr/` once Stage 3 begins — decisions are argued and justified,
-not asserted.
+at: Domain-Driven Design (5 bounded contexts), Hexagonal/Clean Architecture
+(everything behind ports/adapters, including the LLM), CQRS where it earns its
+complexity (3 of 5 contexts, not all), Event-Driven Architecture for the
+ingestion-to-analysis pipeline, and SOLID throughout. A **modular monolith**, not
+microservices, was chosen deliberately for v1 — every non-trivial architectural
+decision, including that one, is recorded as an ADR under
+`docs/03-architecture/adr/` with rejected alternatives and cost reasoning, not just
+asserted.
 
 ## Tech stack
 
@@ -83,22 +97,38 @@ sync with the project's internal engineering log.
 | # | Stage | Status |
 |---|---|---|
 | 0 | Process Bootstrap | ✅ Done |
-| 1 | Problem Discovery | ⬜ Not started |
-| 2 | Product Discovery | ⬜ Not started |
-| 3 | Architecture | ⬜ Not started |
-| 4 | Database | ⬜ Not started |
-| 5 | API Design | ⬜ Not started |
-| 6 | Sequence Diagrams | ⬜ Not started |
-| 7 | Infrastructure | ⬜ Not started |
-| 8 | Testing Strategy | ⬜ Not started |
-| 9 | Implementation (17 capabilities, dependency-ordered) | ⬜ Not started |
+| 1 | Problem Discovery | ✅ Done |
+| 2 | Product Discovery | ✅ Done |
+| 3 | Architecture | ✅ Done |
+| 4 | Database | ✅ Done |
+| 5 | API Design | ✅ Done |
+| 6 | Sequence Diagrams | ✅ Done |
+| 7 | Infrastructure | ✅ Done |
+| 8 | Testing Strategy | ✅ Done |
+| 9 | Implementation (17 capabilities, dependency-ordered) | 🔶 In progress — 9.0, 9.1, 9.2, 9.3, 9.9 done (all confirmed-MVP capabilities) plus 9.5, 9.4, 9.6, 9.8 (four of five Phase 2) |
 | 10 | Optimization | ⬜ Not started |
 
 *(This table is updated manually as each stage progresses.)*
 
+For the cross-cutting plan tying together remaining development sequencing,
+debugging practice, CI/CD activation, and the path to a real launch, see
+[`docs/OPERATIONS_STRATEGY.md`](docs/OPERATIONS_STRATEGY.md) — a living
+document, not itself stage-gated.
+
 ## Repository map
 
 ```
+pyproject.toml       — Python 3.13 project: FastAPI, SQLAlchemy 2, Alembic, Ruff, MyPy (strict), pytest
+src/sibyl/           — application code: identity/, ingestion/, platform/ (shared kernel), api/,
+                       pr_analysis/, test_intelligence/, root_cause_analysis/,
+                       dependency_analysis/ (bounded contexts)
+alembic/             — schema migrations, one independent branch per bounded-context schema
+tests/               — unit / contract (mocked HTTP) / integration (real Postgres/Redis/Kafka via testcontainers)
+docker-compose.yml   — local dev stack: Postgres, Kafka, Redis, full observability
+.env.example         — configuration template (no secrets)
+infra/               — Postgres init, Prometheus/Loki/Tempo/OTel Collector/Grafana config
+deploy/helm/sibyl/   — Kubernetes Helm chart
+.github/workflows/   — CI pipeline (lint, type-check, test, security scan, build)
 docs/
   00-process/      — the engineering process definition + reusable templates
   01-problem-discovery/ ... 10-optimization/ — one folder per lifecycle stage
@@ -134,11 +164,12 @@ snippets — under ~160 characters):
 
 ## Contributing
 
-This project isn't accepting external feature work yet — it has no implementation.
-Once Stage 7 (Infrastructure) is complete and the repo is runnable, contribution
-guidelines will be added under `docs/00-process/` and linked here. Until then, the
-most useful contribution is scrutiny of the reasoning in `docs/01-problem-discovery/`
-through `docs/08-testing-strategy/` as each is filled in.
+Platform Foundation (auth, event backbone, GitHub webhook ingestion) is
+implemented and tested. This project isn't accepting external feature work yet —
+the remaining MVP capabilities (Test Impact Analysis, Flaky Detection, Root Cause
+Analysis) aren't built, and contribution guidelines need that shape to be
+meaningful. Until then, the most useful contribution is scrutiny of the reasoning
+in `docs/01-problem-discovery/` through `docs/09-implementation/`.
 
 ## License
 
