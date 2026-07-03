@@ -173,29 +173,57 @@ the *process* is documented before it's ever needed under time pressure.
 
 ## 3. CI/CD activation & release strategy
 
-### Current state — the pipeline has never actually run
+### Current state — verified green on GitHub Actions (2026-07-03)
 
-The repository is still local-only (`git init`, no remote, per `PROGRESS.md`).
+The repository is pushed to `Boss-Of-Gym/Sibyl` on GitHub (`origin`, public).
 `.github/workflows/ci.yml`'s 5 stages (lint → typecheck → test → security-scan
-→ build) are fully wired and Python-aware (`hashFiles('pyproject.toml')`
-guards), but **have never executed against real code in GitHub Actions** —
-only run locally via `uv run ...` so far. This is the single biggest gap
-between "the pipeline is designed" and "the pipeline works."
+→ build) have now **actually executed against real code in GitHub Actions**,
+not just locally via `uv run ...`. The first real run (commit `f29bfe3`)
+surfaced three genuine gaps that local validation had never exercised —
+confirming the OPERATIONS_STRATEGY prediction that a hosted-runner run would
+differ from local dev, though not in the dimension expected (testcontainers
+themselves worked fine on the first try — `lint` and `test` passed
+immediately):
+- `typecheck` ran `uv run mypy .` (whole repo) in CI, but only `mypy src
+  tests` had ever been run locally — `alembic/env.py`'s `include_object`
+  callback used loose `object`/`str` parameter types that strict mypy
+  rejects under Alembic's real signature. Fixed by typing it against
+  `SchemaItem`/`Literal[...]` to match Alembic's actual stub.
+- `security-scan` failed at "Set up job" itself, before any step (even
+  checkout) ran — `aquasecurity/trivy-action@0.24.0` is not a resolvable tag
+  (current releases use a `v`-prefix). Fixed to `@v0.36.0`.
+- `pip-audit` was invoked via `uv run pip-audit` but was never declared as a
+  project dependency anywhere — would have failed as soon as the job-setup
+  issue above was fixed. Added `pip-audit` to the `dev` dependency group.
+
+All three were real, previously-latent gaps between "validated locally" and
+"what CI actually runs" — none were introduced by this fix, only exposed by
+finally running the pipeline for real. Commit `b3f93a5` (run `28671697831`)
+is fully green: `lint`, `typecheck`, `test`, `security-scan`, `build` all
+`success`.
 
 ### Steps to activate CI for real
 
-1. Decide the license (§4 blocks on this too — do it once, not twice).
-2. Create the GitHub repository, push the existing local history.
-3. Confirm the 5-stage pipeline goes green on the first push — this is the
-   first time `test` will run against real `testcontainers` inside GitHub's
-   hosted runners (different environment than local dev; Docker-in-Docker
-   availability should be verified, not assumed).
+1. ~~Decide the license (§4 blocks on this too — do it once, not twice).~~
+   Still open — not resolved by this activation work; §4 still blocks on it.
+2. ~~Create the GitHub repository, push the existing local history.~~ Done
+   2026-07-03 (`Boss-Of-Gym/Sibyl`, public).
+3. ~~Confirm the 5-stage pipeline goes green on the first push.~~ Done
+   2026-07-03, after fixing the three gaps above — see "Current state" above.
+   Docker-in-Docker for `testcontainers` worked on GitHub-hosted runners
+   without any changes needed, resolving that specific risk.
 4. Add branch protection on `main`: require the `lint`, `typecheck`, `test`,
    and `security-scan` jobs (not `build`, which only runs on `push` to `main`
-   itself) as required status checks before merge; require PR review.
-5. Add a `Dockerfile` for the `api` and `worker` images (Stage 9.0 scope —
-   check whether this already exists; if not, it's a gap in 9.0's Definition
-   of Done worth closing before relying on the `build` job).
+   itself) as required status checks before merge; require PR review. **Not
+   yet done** — a repo-settings change, visible/consequential enough to
+   confirm with the user explicitly before applying, not to bundle into a
+   code-fix session.
+5. Add a `Dockerfile` for the `api` and `worker` images (Stage 9.0 scope).
+   **Confirmed still missing** — checked directly during this activation
+   work (no `Dockerfile` anywhere in the repo root). The `build` job's
+   `if: hashFiles('Dockerfile') != ''` guard means it currently reports
+   `success` by skipping its one real step entirely, not by actually
+   building anything — a gap in 9.0's Definition of Done, not a new one.
 
 ### Versioning & release strategy (not yet decided — proposed here)
 
