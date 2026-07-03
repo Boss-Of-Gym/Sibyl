@@ -1,9 +1,11 @@
 import asyncio
 from logging.config import fileConfig
+from typing import Literal
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy.sql.schema import SchemaItem
 
 from alembic import context
 from sibyl.dependency_analysis.adapters import db_models as dependency_analysis_models  # noqa: F401
@@ -26,7 +28,13 @@ target_metadata = Base.metadata
 
 
 def include_object(
-    object: object, name: str, type_: str, reflected: bool, compare_to: object
+    object: SchemaItem,
+    name: str | None,
+    type_: Literal[
+        "schema", "table", "column", "index", "unique_constraint", "foreign_key_constraint"
+    ],
+    reflected: bool,
+    compare_to: SchemaItem | None,
 ) -> bool:
     schema_filter = context.get_x_argument(as_dictionary=True).get("schema")
     if schema_filter is None:
