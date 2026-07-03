@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-worker
+  labels:
+    {{- include "sibyl.workerLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "sibyl.workerLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sibyl.workerLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: worker
+          image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.worker.metricsPort }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secrets.externalSecretName }}
+          env:
+            - name: DATABASE_HOST
+              value: {{ .Values.postgres.host }}
+            - name: REDIS_HOST
+              value: {{ .Values.redis.host }}
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: {{ .Values.kafka.bootstrapServers }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.observability.otlpEndpoint }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.worker.metricsPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.worker.metricsPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 15

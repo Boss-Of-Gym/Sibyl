@@ -1,0 +1,6 @@
+CREATE SCHEMA IF NOT EXISTS ingestion;
+CREATE SCHEMA IF NOT EXISTS identity;
+CREATE SCHEMA IF NOT EXISTS test_intelligence;
+CREATE SCHEMA IF NOT EXISTS pr_analysis;
+CREATE SCHEMA IF NOT EXISTS root_cause_analysis;
+CREATE SCHEMA IF NOT EXISTS dependency_analysis;

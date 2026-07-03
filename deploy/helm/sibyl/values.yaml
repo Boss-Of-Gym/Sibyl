@@ -1,0 +1,66 @@
+api:
+  image:
+    repository: ghcr.io/sibyl-platform/sibyl-api
+    tag: "0.1.0-dev"
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  service:
+    port: 8000
+
+worker:
+  image:
+    repository: ghcr.io/sibyl-platform/sibyl-worker
+    tag: "0.1.0-dev"
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+  metricsPort: 8001
+
+ingress:
+  enabled: true
+  className: nginx
+  host: api.sibyl.dev
+  tls:
+    enabled: true
+    secretName: sibyl-api-tls
+
+postgres:
+  host: sibyl-postgres
+  port: 5432
+  database: sibyl
+
+redis:
+  host: sibyl-redis
+  port: 6379
+
+kafka:
+  bootstrapServers: sibyl-kafka:9092
+
+secrets:
+  externalSecretName: sibyl-secrets
+
+observability:
+  otlpEndpoint: http://sibyl-otel-collector:4318
