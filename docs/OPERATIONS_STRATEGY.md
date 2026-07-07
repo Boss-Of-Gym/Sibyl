@@ -281,26 +281,25 @@ is fully green: `lint`, `typecheck`, `test`, `security-scan`, `build` all
 
 ### Steps to activate CI for real
 
-1. ~~Decide the license (§4 blocks on this too — do it once, not twice).~~
-   Still open — not resolved by this activation work; §4 still blocks on it.
+1. ~~Decide the license.~~ Done 2026-07-07: Apache-2.0.
 2. ~~Create the GitHub repository, push the existing local history.~~ Done
    2026-07-03 (`Boss-Of-Gym/Sibyl`, public).
 3. ~~Confirm the 5-stage pipeline goes green on the first push.~~ Done
    2026-07-03, after fixing the three gaps above — see "Current state" above.
    Docker-in-Docker for `testcontainers` worked on GitHub-hosted runners
    without any changes needed, resolving that specific risk.
-4. Add branch protection on `main`: require the `lint`, `typecheck`, `test`,
-   and `security-scan` jobs (not `build`, which only runs on `push` to `main`
-   itself) as required status checks before merge; require PR review. **Not
-   yet done** — a repo-settings change, visible/consequential enough to
-   confirm with the user explicitly before applying, not to bundle into a
-   code-fix session.
-5. Add a `Dockerfile` for the `api` and `worker` images (Stage 9.0 scope).
-   **Confirmed still missing** — checked directly during this activation
-   work (no `Dockerfile` anywhere in the repo root). The `build` job's
-   `if: hashFiles('Dockerfile') != ''` guard means it currently reports
-   `success` by skipping its one real step entirely, not by actually
-   building anything — a gap in 9.0's Definition of Done, not a new one.
+4. ~~Add branch protection on `main`.~~ Done 2026-07-07: required status
+   checks (`lint`, `typecheck`, `test`, `security-scan`), `strict=true`,
+   `enforce_admins=false`. **Deviated from the original plan on PR review** —
+   surfaced to the user first that requiring PR review would block direct
+   pushes to `main` for everyone (including the owner) on this
+   solo-maintainer repo with no second reviewer; user chose checks-only, no
+   required review.
+5. ~~Add a `Dockerfile` for the `api` and `worker` images.~~ Done 2026-07-07:
+   multi-stage build, `api`/`worker` targets. Verified both locally
+   (`docker build` + smoke test against running Postgres/Redis) and on
+   GitHub Actions (run `28858350926`, `build` job green — it now genuinely
+   builds images instead of skipping its one step).
 
 ### Versioning & release strategy (not yet decided — proposed here)
 
@@ -356,12 +355,12 @@ deployment automation exists yet:
       description, topics list, and social-preview text — apply them when
       the repo is actually made public, don't re-draft them.
 - [x] CI activated and green (§3).
-- [x] `Dockerfile`s exist — added 2026-07-07 (multi-stage, `api`/`worker`
-      targets, both built and verified locally). `build` job's CI step still
-      needs a real GitHub Actions run to confirm it builds there too (not yet
-      re-verified since this change) — and the worker's missing health
-      endpoint (noted in §1) means it isn't yet safely deployable even once
-      the image builds.
+- [x] `Dockerfile`s exist and `build` job produces real images — added and
+      verified 2026-07-07, both locally (`docker build` + smoke test against
+      running Postgres/Redis) and on GitHub Actions (run `28858350926`, all 5
+      jobs green). The worker's missing health endpoint (noted in §1) means
+      it isn't yet safely *deployable* to real Kubernetes even though the
+      image itself builds and runs correctly.
 
 ### Staging rollout
 
