@@ -482,6 +482,52 @@ inside Dependency Analysis rather than becoming a new context, and the
 Stage 9.8 sub-stage doc for why "breaking" is deliberately limited to a
 semver major-version-bump heuristic, not literal OpenAPI-spec diffing.
 
+*(Addendum, launch-track Phase 1, 2026-07-07)* Every diagram's observability
+annotations (checked off in this doc's own Architecture Review checklist
+below — "every diagram marks where tracing/metrics/logging are emitted")
+were frozen from the start but never actually implemented — every sub-stage
+through 9.8 emitted only structured logs. This pass closed the two most
+broadly-applicable mechanisms, since they're shared by nearly every flow
+above rather than being diagram-specific:
+
+- **§6 (LLM call failure / budget-exceeded fallback)** — fully implemented,
+  including a real correctness fix this diagram already specified but the
+  code never honored: `llm.schema_validation_failed_total` is now its own
+  distinct branch (a Pydantic `ValidationError` from the structured-output
+  adapter), previously indistinguishable from `llm.provider_error_total`
+  because both fell into one generic `except Exception`. `llm.tokens_used`
+  and `llm.latency_ms` are recorded only on the success path, exactly as
+  annotated.
+- **§8 (event consumer failure & dead-letter handling)** — only the `consumer.process`
+  span and `consumer.processed_total` (success path) are implemented. The
+  retry/dead-letter mechanism itself (`consumer.retry_total`,
+  `consumer.dead_lettered_total`, `consumer.malformed_event_total`, the
+  `{topic}.dlq` topics, exponential backoff, on-call alerting) **does not
+  exist in the codebase** — `platform/events/kafka.py`'s `consume_forever`
+  has no retry/backoff/DLQ logic at all; an unhandled exception simply
+  propagates. This was discovered while wiring instrumentation, not
+  previously tracked. Deliberately not fabricating metrics for a mechanism
+  that isn't there — see `docs/OPERATIONS_STRATEGY.md` §1 for this as a
+  tracked follow-up.
+- **§1–4, §9–10 (per-capability named counters** — e.g.
+  `pr_analysis.completed_total`, `test_impact.computed_total`,
+  `flaky_detection.signal_updated_total`, `root_cause.completed_total`,
+  `coverage_intelligence.files_updated_total`**)** — not yet wired; each is a
+  single counter increment at an already-known point in its own application
+  service, tracked as mechanical follow-up work, not a design question.
+- **§5 (auth/authorization)** — `auth.exchange`/`auth.login_success_total`
+  describe a GitHub OAuth login flow (`GET /auth/github/start` and the
+  callback exchange) that was never built — token issuance for human users
+  was explicitly deferred back at 9.0. Nothing to instrument until that
+  feature exists. The JWT-validation half of this diagram
+  (`auth.rejected_total`/`auth.forbidden_total`) and the rate-limiting check
+  it depicts are also both still unimplemented in `identity/auth.py` —
+  unrelated to this pass, tracked separately.
+- **§7 (ingestion failure & retry/backoff)** — not yet wired; `ingestion/api.py`
+  already has the right branches (signature/malformed/dedup checks), just
+  needs the `ingest.webhook` span and its four counters added at each
+  existing branch.
+
 ## Decisions log
 
 | Decision | Alternatives considered | Rejected because | Owner role |

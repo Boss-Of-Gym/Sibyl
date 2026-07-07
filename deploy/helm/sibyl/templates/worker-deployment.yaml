@@ -19,7 +19,7 @@ spec:
           image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
           imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
           ports:
-            - containerPort: {{ .Values.worker.metricsPort }}
+            - containerPort: {{ .Values.worker.healthPort }}
           envFrom:
             - secretRef:
                 name: {{ .Values.secrets.externalSecretName }}
@@ -37,12 +37,12 @@ spec:
           readinessProbe:
             httpGet:
               path: /readyz
-              port: {{ .Values.worker.metricsPort }}
+              port: {{ .Values.worker.healthPort }}
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /healthz
-              port: {{ .Values.worker.metricsPort }}
+              port: {{ .Values.worker.healthPort }}
             initialDelaySeconds: 10
             periodSeconds: 15

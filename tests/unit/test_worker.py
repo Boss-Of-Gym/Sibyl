@@ -74,7 +74,9 @@ async def test_dispatcher_routes_to_the_matching_handler():
     async def handler_b(envelope):
         calls.append(("b", envelope))
 
-    dispatcher = make_dispatcher({"type-a": handler_a, "type-b": handler_b})
+    dispatcher = make_dispatcher(
+        {"type-a": handler_a, "type-b": handler_b}, group_name="test-group"
+    )
 
     await dispatcher({"event_type": "type-b", "payload": {}})
 
@@ -85,7 +87,7 @@ async def test_dispatcher_ignores_unknown_event_type_without_raising():
     async def handler_a(envelope):
         raise AssertionError("should not be called")
 
-    dispatcher = make_dispatcher({"type-a": handler_a})
+    dispatcher = make_dispatcher({"type-a": handler_a}, group_name="test-group")
 
     await dispatcher({"event_type": "unknown-type", "payload": {}})
 

@@ -37,7 +37,7 @@ worker:
     minReplicas: 2
     maxReplicas: 8
     targetCPUUtilizationPercentage: 70
-  metricsPort: 8001
+  healthPort: 8001
 
 ingress:
   enabled: true

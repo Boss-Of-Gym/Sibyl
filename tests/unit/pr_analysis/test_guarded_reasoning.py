@@ -1,5 +1,7 @@
 import asyncio
 
+from pydantic import BaseModel
+
 from sibyl.pr_analysis.adapters.guarded_reasoning import GuardedReasoningPort
 from sibyl.pr_analysis.domain.models import ContributingFactor, PrRiskContext, RiskAssessment
 
@@ -37,6 +39,16 @@ class _HangingDelegate:
         raise AssertionError("should have timed out first")
 
 
+class _RequiredField(BaseModel):
+    value: str
+
+
+class _SchemaInvalidDelegate:
+    async def assess_pr_risk(self, context: PrRiskContext) -> RiskAssessment:
+        _RequiredField.model_validate({})
+        raise AssertionError("model_validate should have raised first")
+
+
 async def test_successful_delegate_call_passes_through():
     port = GuardedReasoningPort(_SucceedingDelegate())
 
@@ -63,3 +75,12 @@ async def test_delegate_timeout_falls_back_without_raising():
 
     assert result.explanation_unavailable is True
     assert result.llm_latency_ms >= 40
+
+
+async def test_schema_validation_failure_falls_back_without_raising():
+    port = GuardedReasoningPort(_SchemaInvalidDelegate())
+
+    result = await port.assess_pr_risk(CONTEXT)
+
+    assert result.explanation_unavailable is True
+    assert result.llm_latency_ms >= 0

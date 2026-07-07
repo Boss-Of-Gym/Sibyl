@@ -72,12 +72,36 @@ header, no further drift found.
    `docs/09-implementation/9.1-pr-analysis/README.md` and
    `docs/09-implementation/9.9-root-cause-analysis/README.md` Changelogs, and
    the Stage 4 addendum in `docs/04-database/README.md`.
-2. Wire real OpenTelemetry spans/metrics into the worker consumer groups and
-   API handlers (Staff Platform Engineer) — every sub-stage so far has
-   deferred this explicitly; today the full Prometheus/Loki/Tempo/Grafana
-   stack is provisioned but emits nothing beyond structured logs. This is the
-   single biggest gap between "observability" as a claimed architectural
-   quality (`MASTER_PROMPT.md` §9) and what's actually demonstrated.
+2. 🔶 Partially done 2026-07-07: real OpenTelemetry spans/metrics wired for
+   the two mechanisms shared across nearly every flow — `llm.call`
+   (span + `llm.budget_exceeded_total`/`timeout_total`/`provider_error_total`/
+   `schema_validation_failed_total`/`success_total`/`latency_ms`/`tokens_used`,
+   in the shared `platform/reasoning_guard.guarded_llm_call`) and
+   `consumer.process` (span + `consumer.processed_total`, in
+   `worker.make_dispatcher`). Also gave `worker.py` an actual HTTP server
+   (`/healthz`/`/readyz` on `worker_health_port`, default 8001) — it had none
+   at all, closing the gap noted below. See the Stage 6 addendum in
+   `docs/06-sequence-diagrams/README.md` for exactly what's covered vs. not.
+   **Remaining, tracked as mechanical follow-up, not a design question:**
+   per-capability named counters (`pr_analysis.completed_total`,
+   `test_impact.computed_total`, `flaky_detection.signal_updated_total`,
+   `root_cause.completed_total`, `coverage_intelligence.files_updated_total`)
+   and the `ingest.webhook` span + its 4 counters in `ingestion/api.py`.
+   **Discovered, real, NOT mechanical follow-up:** the Kafka consumer
+   retry/dead-letter mechanism Stage 6 §8 promises (`consumer.retry_total`,
+   `consumer.dead_lettered_total`, `consumer.malformed_event_total`,
+   `{topic}.dlq` topics, exponential backoff, on-call alerting) does not
+   exist in the codebase at all — `platform/events/kafka.py`'s
+   `consume_forever` has no retry/backoff logic; an unhandled exception in
+   any handler just propagates uncaught. Deliberately did not fabricate
+   metrics for a mechanism that isn't built. This is a real reliability gap,
+   sized more like its own follow-up pass than a quick add-on — needs an
+   explicit decision on when to build it, separate from instrumentation work.
+   Also resolved a related infra inconsistency while here: `infra/prometheus/prometheus.yml`
+   expected direct-scrape `/metrics` endpoints on `api`/`worker` that were
+   never implemented (only OTLP push was ever wired) — removed those scrape
+   jobs rather than build a second, redundant metrics-export mechanism; see
+   the Stage 7 addendum in `docs/07-infrastructure/README.md`.
 3. Curate the golden-set eval dataset and wire the scheduled LLM-eval job
    (Senior AI Engineer, Senior SDET) — a Stage 8 decision never executed.
 4. ✅ Done 2026-07-07: `Dockerfile` added (multi-stage, `api`/`worker` targets
@@ -93,16 +117,9 @@ header, no further drift found.
    approval would have blocked direct pushes without unblocking anything in
    return).
 
-Also discovered during Phase 1 (Dockerfile work), **not yet fixed** — a real
-gap for a future Phase 1 item or the OpenTelemetry pass above: `worker.py`
-has no HTTP server at all, but `deploy/helm/sibyl/templates/worker-deployment.yaml`
-configures `livenessProbe`/`readinessProbe` as `httpGet` checks against
-`metricsPort` (8001). This was flagged as a forward-reference risk back at
-Stage 7's close ("worth checking at Stage 9.0 that the paths match exactly
-what gets built") but never verified until now. Deploying the worker to real
-Kubernetes today would fail its probes immediately. Natural to fold into the
-OpenTelemetry pass (item 2) since a `/metrics` endpoint needs the same kind
-of lightweight HTTP server the worker currently lacks entirely.
+~~Also discovered during Phase 1 (Dockerfile work): `worker.py` had no HTTP
+server at all, but the Helm chart's probes needed one.~~ Fixed 2026-07-07 as
+part of item 2 above.
 
 **Phase 2 — Phase 3 capabilities with no outstanding dependency**, buildable
 now in any order (Senior Python Developer/SDET build, Principal Software
@@ -169,11 +186,23 @@ Every remaining sub-stage follows the same loop used for
 - ~~**`pr_analysis.pr_risk_assessment.llm_tokens_used`/`llm_latency_ms`**~~ —
   resolved 2026-07-07: backfilled in both `pr_analysis` and (the also-gapped)
   `root_cause_analysis`. See the Phase 1 roadmap entry above.
-- **`worker.py` has no HTTP server**, but the Helm chart's
-  `worker-deployment.yaml` configures `httpGet` liveness/readiness probes
-  against it — discovered 2026-07-07 while building the `Dockerfile`. Real
-  Kubernetes deployment of the worker would fail its probes today. Not yet
-  fixed — candidate for folding into the OpenTelemetry instrumentation pass.
+- ~~**`worker.py` has no HTTP server**~~ — resolved 2026-07-07: added
+  `/healthz`/`/readyz` on `worker_health_port` (default 8001), matching the
+  Helm chart's existing probes.
+- **Kafka consumer retry/dead-letter mechanism doesn't exist** — discovered
+  2026-07-07 while instrumenting `consumer.process`. Stage 6 §8 promises
+  bounded retry with exponential backoff, a `{topic}.dlq` topic per source
+  topic, and on-call alerting on DLQ depth; `platform/events/kafka.py`'s
+  `consume_forever` has none of this — an unhandled handler exception simply
+  propagates. Needs an explicit decision on priority/timing — this is a real
+  reliability gap, not a quick add-on to an instrumentation pass.
+- **`auth.exchange` (GitHub OAuth login) and inbound API rate limiting are
+  both unimplemented** — confirmed 2026-07-07 while scoping the
+  OpenTelemetry pass (Stage 6 §5 describes both). Consistent with the
+  already-tracked token-issuance deferral from Stage 9.0; rate limiting was
+  frozen as a Redis use case in Stage 4/5 but never built. Neither blocks
+  anything built so far (no client depends on either yet), but both are real
+  gaps between the frozen API design and shipped code.
 
 ## 2. Debugging strategy
 

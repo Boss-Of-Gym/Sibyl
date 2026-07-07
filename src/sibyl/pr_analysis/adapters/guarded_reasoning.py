@@ -1,6 +1,9 @@
+from sibyl.platform.observability import get_meter
 from sibyl.platform.reasoning_guard import guarded_llm_call
 from sibyl.pr_analysis.domain.models import PrRiskContext, RiskAssessment
 from sibyl.pr_analysis.domain.ports import ReasoningPort
+
+_tokens_used = get_meter(__name__).create_histogram("llm.tokens_used")
 
 
 def _fallback_assessment() -> RiskAssessment:
@@ -24,4 +27,7 @@ class GuardedReasoningPort:
             fallback=_fallback_assessment,
             timeout_seconds=self._timeout_seconds,
         )
-        return result.model_copy(update={"llm_latency_ms": latency_ms})
+        assessment = result.model_copy(update={"llm_latency_ms": latency_ms})
+        if not assessment.explanation_unavailable:
+            _tokens_used.record(assessment.llm_tokens_used)
+        return assessment

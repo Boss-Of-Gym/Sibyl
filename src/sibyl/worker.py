@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import uvicorn
+from fastapi import FastAPI
 from redis.asyncio import Redis
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sibyl.dependency_analysis.adapters.repository import DependencyAnalysisRepository
@@ -19,7 +22,7 @@ from sibyl.platform.events.kafka import KafkaConsumerClient
 from sibyl.platform.events.outbox import OutboxRepository
 from sibyl.platform.github.app_auth import GitHubAppAuthenticator
 from sibyl.platform.github.checks_client import GitHubChecksClient
-from sibyl.platform.observability import configure_observability, get_logger
+from sibyl.platform.observability import configure_observability, get_logger, get_meter, get_tracer
 from sibyl.pr_analysis.adapters.checks_notifier import PrAnalysisChecksNotifier
 from sibyl.pr_analysis.adapters.db_models import PrAnalysisOutboxEvent
 from sibyl.pr_analysis.adapters.guarded_reasoning import GuardedReasoningPort
@@ -41,6 +44,10 @@ from sibyl.test_intelligence.adapters.repository import TestIntelligenceReposito
 from sibyl.test_intelligence.application import TestIntelligenceService
 
 logger = get_logger(__name__)
+tracer = get_tracer(__name__)
+meter = get_meter(__name__)
+
+_processed_total = meter.create_counter("consumer.processed_total")
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 Handler = Callable[[dict[str, Any]], Awaitable[None]]
@@ -236,13 +243,18 @@ def make_dependency_manifest_received_handler(
     return handle
 
 
-def make_dispatcher(handlers: dict[str, Handler]) -> Handler:
+def make_dispatcher(handlers: dict[str, Handler], group_name: str) -> Handler:
     async def dispatch(envelope: dict[str, Any]) -> None:
-        handler = handlers.get(envelope["event_type"])
-        if handler is None:
-            logger.warning("worker.unhandled_event_type", event_type=envelope["event_type"])
-            return
-        await handler(envelope)
+        with tracer.start_as_current_span("consumer.process") as span:
+            span.set_attribute("consumer.group", group_name)
+            span.set_attribute("consumer.event_type", envelope["event_type"])
+
+            handler = handlers.get(envelope["event_type"])
+            if handler is None:
+                logger.warning("worker.unhandled_event_type", event_type=envelope["event_type"])
+                return
+            await handler(envelope)
+            _processed_total.add(1, {"consumer.group": group_name})
 
     return dispatch
 
@@ -272,6 +284,29 @@ async def _run_consumer_group(
         await consumer.consume_forever(dispatcher)
     finally:
         await consumer.stop()
+
+
+def _build_health_app(session_factory: SessionFactory, redis: Redis) -> FastAPI:
+    app = FastAPI()
+
+    @app.get("/healthz")
+    async def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/readyz")
+    async def readyz() -> dict[str, str]:
+        async with session_factory() as session:
+            await session.execute(text("SELECT 1"))
+        await redis.ping()
+        return {"status": "ready"}
+
+    return app
+
+
+async def _run_health_server(app: FastAPI, port: int) -> None:
+    config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    await server.serve()
 
 
 async def run() -> None:
@@ -314,7 +349,8 @@ async def run() -> None:
             "root-cause.hypothesis-ready": make_root_cause_hypothesis_ready_handler(
                 session_factory, root_cause_checks_notifier
             ),
-        }
+        },
+        group_name="pr-analysis-worker",
     )
     test_intelligence_dispatcher = make_dispatcher(
         {
@@ -327,7 +363,8 @@ async def run() -> None:
             "ingestion.coverage-report-received": make_coverage_report_received_handler(
                 session_factory, test_intelligence_service
             ),
-        }
+        },
+        group_name="test-intelligence-worker",
     )
     root_cause_analysis_dispatcher = make_dispatcher(
         {
@@ -343,7 +380,8 @@ async def run() -> None:
             "test-intelligence.flaky-signal-updated": make_root_cause_flaky_signal_updated_handler(
                 session_factory, root_cause_analysis_service
             ),
-        }
+        },
+        group_name="root-cause-analysis-worker",
     )
 
     dependency_analysis_dispatcher = make_dispatcher(
@@ -351,11 +389,15 @@ async def run() -> None:
             "ingestion.dependency-manifest-received": make_dependency_manifest_received_handler(
                 session_factory, dependency_analysis_service
             ),
-        }
+        },
+        group_name="dependency-analysis-worker",
     )
 
     try:
         await asyncio.gather(
+            _run_health_server(
+                _build_health_app(session_factory, redis), settings.worker_health_port
+            ),
             _run_consumer_group(
                 "pr-analysis-worker",
                 [

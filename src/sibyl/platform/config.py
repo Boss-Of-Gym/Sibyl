@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://sibyl:sibyl_local_dev@localhost:5432/sibyl"
     redis_url: str = "redis://localhost:6379/0"
     kafka_bootstrap_servers: str = "localhost:9092"
+    worker_health_port: int = 8001
 
     otel_exporter_otlp_endpoint: str = "http://localhost:4318"
 

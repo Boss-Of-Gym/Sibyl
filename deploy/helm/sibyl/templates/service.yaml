@@ -21,6 +21,6 @@ spec:
   selector:
     {{- include "sibyl.workerLabels" . | nindent 4 }}
   ports:
-    - port: {{ .Values.worker.metricsPort }}
-      targetPort: {{ .Values.worker.metricsPort }}
+    - port: {{ .Values.worker.healthPort }}
+      targetPort: {{ .Values.worker.healthPort }}
       name: metrics
