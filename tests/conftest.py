@@ -24,6 +24,7 @@ SCHEMAS = [
     "root_cause_analysis",
     "dependency_analysis",
     "regression_prediction",
+    "engineering_metrics",
 ]
 
 

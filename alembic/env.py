@@ -9,6 +9,7 @@ from sqlalchemy.sql.schema import SchemaItem
 
 from alembic import context
 from sibyl.dependency_analysis.adapters import db_models as dependency_analysis_models  # noqa: F401
+from sibyl.engineering_metrics.adapters import db_models as engineering_metrics_models  # noqa: F401
 from sibyl.identity.adapters import db_models as identity_models  # noqa: F401
 from sibyl.ingestion.adapters import db_models as ingestion_models  # noqa: F401
 from sibyl.platform.config import get_settings

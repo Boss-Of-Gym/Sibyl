@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sibyl.dependency_analysis.adapters.repository import DependencyAnalysisRepository
 from sibyl.dependency_analysis.application import DependencyAnalysisService
+from sibyl.engineering_metrics.adapters.repository import EngineeringMetricsRepository
+from sibyl.engineering_metrics.application import EngineeringMetricsService
 from sibyl.identity.adapters.repository import InstallationRepository
 from sibyl.ingestion.adapters.db_models import IngestionOutboxEvent
 from sibyl.platform.config import Settings, get_settings
@@ -300,6 +302,36 @@ def make_regression_prediction_completed_handler(
     return handle
 
 
+def make_engineering_metrics_pr_changed_handler(
+    session_factory: SessionFactory, service: EngineeringMetricsService
+) -> Handler:
+    async def handle(envelope: dict[str, Any]) -> None:
+        installation_id = uuid.UUID(envelope["installation_id"])
+        async with session_factory() as session:
+            await service.handle_pr_changed(session, installation_id, envelope["payload"])
+        logger.info(
+            "worker.engineering_metrics.pr_changed_processed",
+            repository=envelope["payload"].get("repository"),
+        )
+
+    return handle
+
+
+def make_engineering_metrics_ci_run_completed_handler(
+    session_factory: SessionFactory, service: EngineeringMetricsService
+) -> Handler:
+    async def handle(envelope: dict[str, Any]) -> None:
+        installation_id = uuid.UUID(envelope["installation_id"])
+        async with session_factory() as session:
+            await service.handle_ci_run_completed(session, installation_id, envelope["payload"])
+        logger.info(
+            "worker.engineering_metrics.ci_run_processed",
+            repository=envelope["payload"].get("repository"),
+        )
+
+    return handle
+
+
 def make_dispatcher(handlers: dict[str, Handler], group_name: str) -> Handler:
     async def dispatch(envelope: dict[str, Any]) -> None:
         with tracer.start_as_current_span("consumer.process") as span:
@@ -410,6 +442,7 @@ async def run() -> None:
         root_cause_reasoning_port,
     )
     dependency_analysis_service = DependencyAnalysisService(DependencyAnalysisRepository())
+    engineering_metrics_service = EngineeringMetricsService(EngineeringMetricsRepository())
 
     regression_prediction_reasoning_port = RegressionPredictionGuardedReasoningPort(
         RegressionPredictionAnthropicReasoningPort(
@@ -493,6 +526,18 @@ async def run() -> None:
         group_name="dependency-analysis-worker",
     )
 
+    engineering_metrics_dispatcher = make_dispatcher(
+        {
+            "ingestion.pr-changed": make_engineering_metrics_pr_changed_handler(
+                session_factory, engineering_metrics_service
+            ),
+            "ingestion.ci-run-completed": make_engineering_metrics_ci_run_completed_handler(
+                session_factory, engineering_metrics_service
+            ),
+        },
+        group_name="engineering-metrics-worker",
+    )
+
     try:
         await asyncio.gather(
             _run_health_server(
@@ -557,6 +602,13 @@ async def run() -> None:
                 ["ingestion.dependency-manifest-received"],
                 settings.kafka_bootstrap_servers,
                 dependency_analysis_dispatcher,
+                kafka_producer,
+            ),
+            _run_consumer_group(
+                "engineering-metrics-worker",
+                ["ingestion.pr-changed", "ingestion.ci-run-completed"],
+                settings.kafka_bootstrap_servers,
+                engineering_metrics_dispatcher,
                 kafka_producer,
             ),
         )

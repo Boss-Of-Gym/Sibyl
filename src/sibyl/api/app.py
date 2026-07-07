@@ -7,6 +7,7 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 
 from sibyl.dependency_analysis.api import router as dependency_analysis_router
+from sibyl.engineering_metrics.api import router as engineering_metrics_router
 from sibyl.ingestion.api import router as ingestion_router
 from sibyl.ingestion.coverage_api import router as coverage_router
 from sibyl.ingestion.dependency_api import router as dependency_router
@@ -46,6 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(root_cause_analysis_router)
     app.include_router(dependency_analysis_router)
     app.include_router(regression_prediction_router)
+    app.include_router(engineering_metrics_router)
 
     @app.exception_handler(ProblemException)
     async def problem_exception_handler(request: Request, exc: ProblemException) -> JSONResponse:
