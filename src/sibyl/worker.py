@@ -43,6 +43,9 @@ from sibyl.regression_prediction.adapters.llm_reasoning import (
 )
 from sibyl.regression_prediction.adapters.repository import RegressionPredictionRepository
 from sibyl.regression_prediction.application import RegressionPredictionService
+from sibyl.release_risk_analysis.adapters.db_models import ReleaseRiskOutboxEvent
+from sibyl.release_risk_analysis.adapters.repository import ReleaseRiskAnalysisRepository
+from sibyl.release_risk_analysis.application import ReleaseRiskAnalysisService
 from sibyl.root_cause_analysis.adapters.checks_notifier import RootCauseChecksNotifier
 from sibyl.root_cause_analysis.adapters.db_models import RootCauseAnalysisOutboxEvent
 from sibyl.root_cause_analysis.adapters.guarded_reasoning import (
@@ -332,6 +335,53 @@ def make_engineering_metrics_ci_run_completed_handler(
     return handle
 
 
+def make_release_risk_ci_run_completed_handler(
+    session_factory: SessionFactory, service: ReleaseRiskAnalysisService
+) -> Handler:
+    async def handle(envelope: dict[str, Any]) -> None:
+        installation_id = uuid.UUID(envelope["installation_id"])
+        async with session_factory() as session:
+            await service.handle_ci_run_completed(session, installation_id, envelope["payload"])
+        logger.info(
+            "worker.release_risk_analysis.ci_run_processed",
+            repository=envelope["payload"].get("repository"),
+        )
+
+    return handle
+
+
+def make_release_risk_coverage_computed_handler(
+    session_factory: SessionFactory, service: ReleaseRiskAnalysisService
+) -> Handler:
+    async def handle(envelope: dict[str, Any]) -> None:
+        installation_id = uuid.UUID(envelope["installation_id"])
+        async with session_factory() as session:
+            await service.handle_coverage_computed(session, installation_id, envelope["payload"])
+        logger.info(
+            "worker.release_risk_analysis.coverage_processed",
+            repository=envelope["payload"].get("repository"),
+        )
+
+    return handle
+
+
+def make_release_risk_prediction_completed_handler(
+    session_factory: SessionFactory, service: ReleaseRiskAnalysisService
+) -> Handler:
+    async def handle(envelope: dict[str, Any]) -> None:
+        installation_id = uuid.UUID(envelope["installation_id"])
+        async with session_factory() as session:
+            await service.handle_regression_prediction_completed(
+                session, installation_id, envelope["payload"]
+            )
+        logger.info(
+            "worker.release_risk_analysis.assessment_processed",
+            repository=envelope["payload"].get("repository"),
+        )
+
+    return handle
+
+
 def make_dispatcher(handlers: dict[str, Handler], group_name: str) -> Handler:
     async def dispatch(envelope: dict[str, Any]) -> None:
         with tracer.start_as_current_span("consumer.process") as span:
@@ -420,6 +470,7 @@ async def run() -> None:
     test_intelligence_outbox_repository = OutboxRepository(TestIntelligenceOutboxEvent)
     root_cause_analysis_outbox_repository = OutboxRepository(RootCauseAnalysisOutboxEvent)
     regression_prediction_outbox_repository = OutboxRepository(RegressionPredictionOutboxEvent)
+    release_risk_outbox_repository = OutboxRepository(ReleaseRiskOutboxEvent)
 
     reasoning_port = GuardedReasoningPort(
         AnthropicReasoningPort(settings.llm_provider_api_key, settings.llm_provider_model)
@@ -453,6 +504,9 @@ async def run() -> None:
         RegressionPredictionRepository(),
         regression_prediction_outbox_repository,
         regression_prediction_reasoning_port,
+    )
+    release_risk_analysis_service = ReleaseRiskAnalysisService(
+        ReleaseRiskAnalysisRepository(), release_risk_outbox_repository
     )
 
     pr_analysis_repository = PrAnalysisRepository()
@@ -538,6 +592,21 @@ async def run() -> None:
         group_name="engineering-metrics-worker",
     )
 
+    release_risk_analysis_dispatcher = make_dispatcher(
+        {
+            "ingestion.ci-run-completed": make_release_risk_ci_run_completed_handler(
+                session_factory, release_risk_analysis_service
+            ),
+            "test-intelligence.coverage-computed": make_release_risk_coverage_computed_handler(
+                session_factory, release_risk_analysis_service
+            ),
+            "regression-prediction.completed": make_release_risk_prediction_completed_handler(
+                session_factory, release_risk_analysis_service
+            ),
+        },
+        group_name="release-risk-analysis-worker",
+    )
+
     try:
         await asyncio.gather(
             _run_health_server(
@@ -554,6 +623,7 @@ async def run() -> None:
             run_relay_forever(
                 session_factory, regression_prediction_outbox_repository, kafka_producer
             ),
+            run_relay_forever(session_factory, release_risk_outbox_repository, kafka_producer),
             _run_consumer_group(
                 "pr-analysis-worker",
                 [
@@ -609,6 +679,17 @@ async def run() -> None:
                 ["ingestion.pr-changed", "ingestion.ci-run-completed"],
                 settings.kafka_bootstrap_servers,
                 engineering_metrics_dispatcher,
+                kafka_producer,
+            ),
+            _run_consumer_group(
+                "release-risk-analysis-worker",
+                [
+                    "ingestion.ci-run-completed",
+                    "test-intelligence.coverage-computed",
+                    "regression-prediction.completed",
+                ],
+                settings.kafka_bootstrap_servers,
+                release_risk_analysis_dispatcher,
                 kafka_producer,
             ),
         )

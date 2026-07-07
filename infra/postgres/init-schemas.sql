@@ -6,3 +6,4 @@ CREATE SCHEMA IF NOT EXISTS root_cause_analysis;
 CREATE SCHEMA IF NOT EXISTS dependency_analysis;
 CREATE SCHEMA IF NOT EXISTS regression_prediction;
 CREATE SCHEMA IF NOT EXISTS engineering_metrics;
+CREATE SCHEMA IF NOT EXISTS release_risk_analysis;

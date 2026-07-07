@@ -101,6 +101,7 @@ class TestIntelligenceService:
         now = datetime.now(UTC)
 
         for file in report.files:
+            coverage_pct = compute_coverage_pct(file.lines_covered, file.lines_total)
             await self._repository.upsert_file_coverage_signal(
                 session,
                 installation_id=installation_id,
@@ -109,8 +110,20 @@ class TestIntelligenceService:
                 commit_sha=report.commit_sha,
                 lines_covered=file.lines_covered,
                 lines_total=file.lines_total,
-                coverage_pct=compute_coverage_pct(file.lines_covered, file.lines_total),
+                coverage_pct=coverage_pct,
                 computed_at=now,
+            )
+            await self._outbox.add(
+                session,
+                event_type="test-intelligence.coverage-computed",
+                installation_id=installation_id,
+                payload={
+                    "repository": report.repository,
+                    "file_path": file.file_path,
+                    "coverage_pct": coverage_pct,
+                    "computed_at": now.isoformat(),
+                },
+                occurred_at=now,
             )
 
         await session.commit()

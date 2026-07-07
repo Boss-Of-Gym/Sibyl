@@ -1,5 +1,7 @@
 import uuid
 
+from sqlalchemy import select
+
 from sibyl.platform.events.outbox import OutboxRepository
 from sibyl.test_intelligence.adapters.db_models import TestIntelligenceOutboxEvent
 from sibyl.test_intelligence.adapters.repository import TestIntelligenceRepository
@@ -10,6 +12,16 @@ def _service() -> TestIntelligenceService:
     return TestIntelligenceService(
         TestIntelligenceRepository(), OutboxRepository(TestIntelligenceOutboxEvent)
     )
+
+
+async def _get_coverage_computed_events(
+    db_session, installation_id: uuid.UUID
+) -> list[TestIntelligenceOutboxEvent]:
+    stmt = select(TestIntelligenceOutboxEvent).where(
+        TestIntelligenceOutboxEvent.event_type == "test-intelligence.coverage-computed",
+        TestIntelligenceOutboxEvent.installation_id == installation_id,
+    )
+    return list((await db_session.execute(stmt)).scalars().all())
 
 
 async def test_handle_coverage_report_received_upserts_all_files(db_session):
@@ -40,6 +52,10 @@ async def test_handle_coverage_report_received_upserts_all_files(db_session):
     assert signal_a.coverage_pct == 0.8
     assert signal_b is not None
     assert signal_b.coverage_pct == 0.2
+
+    events = await _get_coverage_computed_events(db_session, installation_id)
+    assert {e.payload["file_path"] for e in events} == {"src/a.py", "src/b.py"}
+    assert {e.payload["coverage_pct"] for e in events} == {0.8, 0.2}
 
 
 async def test_handle_coverage_report_received_overwrites_previous_snapshot(db_session):

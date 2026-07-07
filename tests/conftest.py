@@ -25,6 +25,7 @@ SCHEMAS = [
     "dependency_analysis",
     "regression_prediction",
     "engineering_metrics",
+    "release_risk_analysis",
 ]
 
 
