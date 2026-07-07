@@ -102,8 +102,20 @@ header, no further drift found.
    never implemented (only OTLP push was ever wired) — removed those scrape
    jobs rather than build a second, redundant metrics-export mechanism; see
    the Stage 7 addendum in `docs/07-infrastructure/README.md`.
-3. Curate the golden-set eval dataset and wire the scheduled LLM-eval job
-   (Senior AI Engineer, Senior SDET) — a Stage 8 decision never executed.
+3. 🔶 Partially done 2026-07-07: golden-set eval harness built (`eval/`) —
+   `eval/models.py`/`scoring.py` (structured-field scoring, unit-tested with
+   no live API needed), `eval/golden_sets/*.jsonl` (5 synthetic-but-realistic
+   cases per capability), `eval/run_golden_set.py` (CLI harness), and
+   `.github/workflows/llm-eval.yml` (weekly schedule + `workflow_dispatch` +
+   PR-triggered on adapter changes, guarded on `secrets.LLM_PROVIDER_API_KEY`
+   being set). **Two things genuinely blocked on real usage, not done here,
+   documented honestly in `eval/README.md` rather than faked:** the dataset
+   is synthetic (no real PR/failure history exists yet), and the harness's
+   live-API call path has never actually been exercised against a real key
+   in this environment — only its scoring logic is proven, via unit tests.
+   Verify end-to-end the first time a real `LLM_PROVIDER_API_KEY` exists.
+   Cost/latency budget tests (needing real historical telemetry) are
+   explicitly not attempted — same "no data yet" reasoning as Stage 10.
 4. ✅ Done 2026-07-07: `Dockerfile` added (multi-stage, `api`/`worker` targets
    via `--target`), `.dockerignore` added, both images built and verified
    locally. CI's `build` job will now build real images instead of skipping

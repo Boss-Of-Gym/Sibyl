@@ -1,0 +1,26 @@
+name: LLM Golden-Set Eval
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 6 * * 1"
+  pull_request:
+    paths:
+      - "src/sibyl/pr_analysis/adapters/llm_reasoning.py"
+      - "src/sibyl/root_cause_analysis/adapters/llm_reasoning.py"
+      - "eval/**"
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        capability: [pr-analysis, root-cause-analysis]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv run python -m eval.run_golden_set ${{ matrix.capability }}
+        if: ${{ secrets.LLM_PROVIDER_API_KEY != '' }}
+        env:
+          LLM_PROVIDER_API_KEY: ${{ secrets.LLM_PROVIDER_API_KEY }}
+          LLM_PROVIDER_MODEL: ${{ secrets.LLM_PROVIDER_MODEL }}
