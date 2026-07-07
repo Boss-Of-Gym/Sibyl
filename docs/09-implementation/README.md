@@ -1,6 +1,8 @@
 # Stage 9 — Implementation
 
-**Status:** `NOT_STARTED`
+**Status:** `IN_PROGRESS` — 9/18 sub-stages `APPROVED` (all 4 MVP capabilities
+plus Platform Foundation, and 4 of 5 Phase 2 capabilities — see the roadmap
+table below; last synced 2026-07-03)
 **Leads:** Senior Python Developer, Senior AI Engineer, Senior SDET (per sub-stage)
 **Reviewers:** Principal Software Engineer, Senior Security Engineer (per sub-stage)
 **Entry criteria:** Stage 8 (Testing Strategy) `APPROVED`.

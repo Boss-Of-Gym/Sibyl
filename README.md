@@ -173,4 +173,8 @@ in `docs/01-problem-discovery/` through `docs/09-implementation/`.
 
 ## License
 
-Not yet decided — to be finalized during Product Discovery.
+[Apache License 2.0](LICENSE) — chosen for its explicit patent grant and its
+established use across production-grade infrastructure/platform projects at
+this stack's scale (Kubernetes, Prometheus, Kafka all use it), consistent
+with this project's own positioning rather than a generic permissive
+license.
