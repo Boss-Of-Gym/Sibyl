@@ -275,3 +275,87 @@ postback. Required one contract change to an already-frozen event: the
 `root-cause.hypothesis-ready` payload gained a `suspected_file_path` field
 (previously omitted) so Regression Prediction can build its historical
 index by file — logged as a Stage 4 addendum, not a silent change.
+
+## Addendum (Sub-stage 9.7, 2026-07-07): Engineering Metrics is a new, eighth bounded context — closing the deferral honestly by narrowing scope, not by joining an existing context
+
+9.7 (Engineering Metrics) was deliberately deferred earlier in Phase 2:
+Stage 9's roadmap description calls for "DORA-style metrics," and full DORA
+(deployment frequency, lead time to production, change failure rate, MTTR)
+genuinely requires deployment/incident event data this project has no
+ingestion source for — fabricating it was rejected then and is still
+rejected now. Revisiting the deferral rather than leaving it open-ended:
+9.7's own frozen dependency list is just `9.0`, `9.1`, `9.3` — it does not
+depend on any deployment infrastructure at all. Read literally, the
+buildable subset is narrower than full DORA: aggregate PR-flow (cycle time)
+and CI-health (success rate, duration) signal into read-time statistics
+over a time window. That subset is real, honestly scoped, and buildable
+today without inventing data.
+
+Running the same ubiquitous-language evaluation against both existing
+contexts whose data this subset touches:
+
+- **Does it share language with PR Analysis?** PR Analysis answers "how
+  risky is *this one* PR's diff" — a single-subject, structural judgment
+  produced once per PR via LLM narrative reasoning. Engineering Metrics
+  answers "how healthy is the PR flow *in aggregate* over the last N days" —
+  a population-level statistic (median cycle time across many PRs) that
+  needs lifecycle timestamps (`opened_at`/`merged_at`/`closed_at`) PR
+  Analysis's own domain model never tracked and has no reason to. Different
+  subject (one PR vs. a population of PRs), different question shape
+  (narrative risk judgment vs. arithmetic aggregation). **Not the same
+  fact.**
+- **Does it share language with Test Intelligence?** Test Intelligence's
+  CI-run-derived signals (flakiness, duration, coverage) are all keyed by
+  `test_identifier` — "is *this specific test* flaky/slow." Engineering
+  Metrics needs per-*CI-run* aggregates (did the run pass overall, how long
+  did the whole run take) across a population of runs, not per-test
+  history. Same raw event (`ingestion.ci-run-completed`) as a producer, but
+  a different unit of analysis and a different question ("is the pipeline
+  healthy in aggregate" vs. "is this one test reliable"). **Not the same
+  fact either.**
+
+Both comparisons land on "different question, different unit of analysis,"
+the same signal that split Dependency Analysis (9.6) and Regression
+Prediction (9.10) out on their own. **Decision: Engineering Metrics is a
+new, eighth bounded context.**
+
+Unlike every other context so far, this one needs **no new Kafka topic at
+all** — it has nothing to publish (no downstream consumer needs "PR/CI
+metrics were recomputed"), and it needs no new *producer* either: it
+consumes the two raw ingestion topics (`ingestion.pr-changed`,
+`ingestion.ci-run-completed`) directly, the same topics Test Intelligence
+and PR Analysis already consume, as an independent Kafka consumer group
+reading its own local projection. This is the cheapest possible integration
+shape in this system — cheaper even than 9.10's, which still needed a new
+topic and a frozen-contract amendment.
+
+Alternatives considered:
+- **Extend PR Analysis's `pull_request` table with `merged_at`/`closed_at`
+  and build the read API there.** Rejected: would conflate a per-PR risk
+  score with a population-level flow statistic in one context's schema —
+  the same "everything dumped in one place" failure mode the Stage 9.4
+  threshold exists to catch, just against a different context. Also
+  unnecessary in practice: `ingestion.pr-changed` already carries the full
+  raw GitHub webhook payload verbatim, including `merged_at`/`closed_at`,
+  so no upstream context needs modification at all — any new consumer can
+  read fields no *existing* consumer happened to model yet.
+- **Build full DORA now, backfilling synthetic deployment data.** Rejected
+  outright: fabricating evidence to unblock a roadmap item violates this
+  project's evidence-before-speculation discipline; a real deployment
+  ingestion source is still genuinely absent infrastructure, not a design
+  choice to route around.
+- **Pre-computed rollup tables (recompute-on-write), matching neither
+  existing pattern exactly.** Rejected: read-time aggregation over stored
+  per-PR/per-run rows, mirroring Test Intelligence's own
+  `list_slow_tests`/`list_coverage_gaps` read-time ranking, keeps the write
+  path a plain upsert and avoids a second source of truth for numbers a
+  30-day window query can compute cheaply on demand.
+
+Consequence: an eighth bounded context and Postgres schema
+(`engineering_metrics`), with `pr_lifecycle_projection` and
+`ci_run_projection` as local, per-window read-side projections built from
+the two raw ingestion topics — no outbox table (first context to genuinely
+need none from day one), no new topic, no new event contract. Full DORA
+(deployment frequency, lead time to production, change failure rate, MTTR)
+remains explicitly deferred, now for a documented reason (no deployment
+ingestion source) rather than an open-ended "later."

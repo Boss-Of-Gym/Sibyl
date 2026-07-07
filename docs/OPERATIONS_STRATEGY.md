@@ -168,15 +168,23 @@ Engineer review, user sign-off — same loop as every prior sub-stage):
 - 9.16 Architecture Insights (needs 9.6, 9.8 — both `APPROVED`)
 - (9.10 Regression Prediction moved to Phase 2 above, per the correction.)
 
-**Phase 3.5 — 9.7 Engineering Metrics** (Engineering Manager calls the
-timing). Still blocked on a real deployment-event source, unlike 9.10 — this
-is why it's deferred and 9.10 isn't. The natural trigger is Phase 5 (Launch)
-standing up a real deploy pipeline — at that point 9.7 unblocks with real
-data instead of synthesized events, which is the whole reason it's been
-deferred through every prior sub-stage decision.
+**Phase 3.5 — 9.7 Engineering Metrics.** ✅ Done 2026-07-07. **Revisited the
+deferral rather than waiting for Phase 5's deploy pipeline**: full DORA
+metrics genuinely still need a real deployment-event source that doesn't
+exist, but 9.7's own frozen dependency list (`9.0`, `9.1`, `9.3`) never
+actually required one — a narrower, honestly-scoped subset (PR-flow cycle
+time + CI-health success rate/duration, read-time aggregated) was buildable
+now without fabricating data. Built as a new, eighth bounded context
+(`engineering_metrics`) — see
+`docs/09-implementation/9.7-engineering-metrics/README.md` and the ADR-0002
+addendum for the full design; the first context needing no outbox table and
+no new Kafka topic at all (consumes the two raw ingestion topics directly).
+Full DORA remains deferred, now for the documented reason above rather than
+an open-ended "later." 274 tests (was 256), 92% overall coverage.
 
-**Phase 4 — Remaining Phase 3, gated on 9.7/9.10:**
-- 9.11 Release Risk Analysis (needs 9.4 ✅, 9.7, 9.10)
+**Phase 4 — Remaining Phase 3, dependencies now clear (9.7 and 9.10 both
+`APPROVED`):**
+- 9.11 Release Risk Analysis (needs 9.4 ✅, 9.7 ✅, 9.10 ✅)
 - 9.12 Release Advisor (needs 9.11)
 - 9.13 Incident Analysis (needs 9.9 ✅, 9.11)
 - 9.17 Knowledge Graph — kept last per the roadmap's own stated intent

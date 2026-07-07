@@ -1,7 +1,7 @@
 # Stage 9 — Implementation
 
-**Status:** `IN_PROGRESS` — 10/18 sub-stages `APPROVED` (all 4 MVP capabilities
-plus Platform Foundation, and 5 of 6 Phase 2 capabilities — see the roadmap
+**Status:** `IN_PROGRESS` — 11/18 sub-stages `APPROVED` (all 4 MVP capabilities
+plus Platform Foundation, and all 6 Phase 2 capabilities — see the roadmap
 table below; last synced 2026-07-07)
 **Leads:** Senior Python Developer, Senior AI Engineer, Senior SDET (per sub-stage)
 **Reviewers:** Principal Software Engineer, Senior Security Engineer (per sub-stage)
@@ -54,7 +54,7 @@ revisited — the Priority column below is the actual source of build-order trut
 | 9.4 | [Coverage Intelligence](9.4-coverage-intelligence/README.md) | 9.0, 9.2 | Phase 2 | Builds on the test-impact data model to reason about coverage gaps meaningfully rather than raw percentages. | `APPROVED` |
 | 9.5 | [CI/CD Optimization](9.5-ci-cd-optimization/README.md) | 9.0, 9.3 | Phase 2 | Needs reliable run-history and flakiness signal (9.3) to distinguish "slow" from "flaky" before optimizing pipelines. | `APPROVED` |
 | 9.6 | [Dependency Analysis](9.6-dependency-analysis/README.md) | 9.0 | Phase 2 | Needs manifest/lockfile ingestion from the foundation; independent of the PR/test-signal chain. | `APPROVED` |
-| 9.7 | Engineering Metrics | 9.0, 9.1, 9.3 | Phase 2 | Aggregates PR-flow and CI-health signal into DORA-style metrics — needs those signals to exist first. | `NOT_STARTED` |
+| 9.7 | [Engineering Metrics](9.7-engineering-metrics/README.md) | 9.0, 9.1, 9.3 | Phase 2 | Aggregates PR-flow and CI-health signal into DORA-style metrics — needs those signals to exist first. Scoped down to a PR-flow + CI-health subset; full DORA remains deferred (no deployment ingestion source). | `APPROVED` |
 | 9.8 | [API Evolution Tracking](9.8-api-evolution-tracking/README.md) | 9.0, 9.6 | Phase 2 | Needs dependency/manifest awareness (9.6) plus OpenAPI-diffing to detect breaking changes across services. | `APPROVED` |
 | 9.10 | [Regression Prediction](9.10-regression-prediction/README.md) | 9.2, 9.9 | Phase 2 | Needs the correlation model from Root Cause Analysis as its training/heuristic basis. | `APPROVED` |
 | 9.11 | Release Risk Analysis | 9.4, 9.7, 9.10 | Phase 3 | Fuses coverage, metrics, and regression-risk signal into a single release-level score. | `NOT_STARTED` |

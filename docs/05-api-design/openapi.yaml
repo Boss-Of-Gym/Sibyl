@@ -477,6 +477,32 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /repositories/{owner}/{repo}/engineering-metrics:
+    get:
+      operationId: getEngineeringMetrics
+      summary: PR-flow and CI-health metrics for a repository over a time window (Sub-stage 9.7)
+      tags: [engineering-metrics]
+      security:
+        - bearerAuth: [read:engineering-metrics]
+      parameters:
+        - $ref: "#/components/parameters/Owner"
+        - $ref: "#/components/parameters/Repo"
+        - name: windowDays
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+      responses:
+        "200":
+          description: Aggregated PR cycle time and CI health statistics for the requested window.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EngineeringMetrics"
+
   /installations:
     get:
       operationId: listInstallations
@@ -529,12 +555,12 @@ components:
         JWT scoped per the RBAC catalog in `docs/05-api-design/README.md`
         (read:pr-analysis, read:test-intelligence, read:root-cause,
         read:dependency-analysis, read:regression-prediction,
-        admin:installations, write:test-results, write:coverage-reports,
-        write:dependency-manifests). Most scopes are issued after GitHub
-        OAuth login; write:test-results, write:coverage-reports, and
-        write:dependency-manifests are issued to CI jobs specifically (see
-        the Stage 9.2, Stage 9.4, and Stage 9.6 addenda in
-        `docs/05-api-design/README.md`).
+        read:engineering-metrics, admin:installations, write:test-results,
+        write:coverage-reports, write:dependency-manifests). Most scopes are
+        issued after GitHub OAuth login; write:test-results,
+        write:coverage-reports, and write:dependency-manifests are issued to
+        CI jobs specifically (see the Stage 9.2, Stage 9.4, and Stage 9.6
+        addenda in `docs/05-api-design/README.md`).
 
   parameters:
     Owner:
@@ -907,6 +933,39 @@ components:
           type: string
           format: date-time
 
+    EngineeringMetrics:
+      type: object
+      required:
+        [
+          windowDays,
+          pullRequestCount,
+          medianPrCycleTimeHours,
+          ciRunCount,
+          ciSuccessRate,
+          medianCiDurationMinutes,
+        ]
+      properties:
+        windowDays:
+          type: integer
+        pullRequestCount:
+          type: integer
+        medianPrCycleTimeHours:
+          type: number
+          format: float
+          nullable: true
+        ciRunCount:
+          type: integer
+        ciSuccessRate:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          nullable: true
+        medianCiDurationMinutes:
+          type: number
+          format: float
+          nullable: true
+
     Installation:
       type: object
       required: [id, organizationLogin, installedAt]
@@ -979,5 +1038,11 @@ tags:
       bounded context, structurally closer to the MVP correlate-then-call-LLM
       contexts than to anything in Phase 2; see the Sub-stage 9.10 ADR-0002
       addendum
+  - name: engineering-metrics
+    description: >-
+      Engineering Metrics bounded context (Sub-stage 9.7 addendum) — a new
+      bounded context closing the 9.7 deferral with a narrower, honestly-
+      scoped subset (PR-flow + CI-health aggregation, not full DORA); see
+      the Sub-stage 9.7 ADR-0002 addendum
   - name: identity-access
     description: Identity/Access bounded context

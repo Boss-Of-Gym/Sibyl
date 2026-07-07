@@ -434,6 +434,58 @@ its own outbox (`regression-prediction.completed`, consumed by the
 alongside the postbacks it already handles for PR Analysis and Root Cause
 Analysis).
 
+*(Addendum, Sub-stage 9.7)* **`engineering_metrics`** — a new, eighth schema
+(see the ADR-0002 addendum: closes the 9.7 deferral with a narrower,
+honestly-scoped subset — PR-flow and CI-health aggregation, not full DORA).
+Two local, per-window read-side projections built directly from the two raw
+ingestion topics, **no outbox table**:
+
+```mermaid
+erDiagram
+    PR_LIFECYCLE_PROJECTION {
+        uuid id PK
+        uuid installation_id "scoping key, not a FK"
+        text repository
+        int pr_number
+        timestamptz opened_at
+        timestamptz merged_at "nullable"
+        timestamptz closed_at "nullable"
+        boolean merged
+    }
+    CI_RUN_PROJECTION {
+        uuid id PK
+        uuid installation_id "scoping key, not a FK"
+        text repository
+        bigint ci_run_id
+        text commit_sha
+        timestamptz started_at
+        timestamptz completed_at
+        int passed_count
+        int failed_count
+        int skipped_count
+    }
+```
+
+Both projections are upserted by their natural key (`repository`+`pr_number`,
+`repository`+`ci_run_id`) directly from `ingestion.pr-changed` and
+`ingestion.ci-run-completed` — the same two raw topics Test Intelligence and
+PR Analysis already consume, read here as an independent consumer group
+rather than through either of those contexts. `PR_LIFECYCLE_PROJECTION` is
+populated entirely from fields (`pull_request.created_at`/`merged_at`/
+`closed_at`/`merged`) that already exist verbatim in the raw GitHub webhook
+payload Ingestion publishes — no upstream change to `ingestion` or
+`pr_analysis` was needed. The read API (`GET
+/repositories/{owner}/{repo}/engineering-metrics?windowDays=30`) computes
+medians and success rate at request time from rows in the window, mirroring
+Test Intelligence's `list_slow_tests`/`list_coverage_gaps` read-time-ranking
+pattern rather than maintaining a pre-computed rollup table.
+
+This is the first context with genuinely no outbox: nothing downstream
+needs to react to "PR/CI metrics were recomputed," so no `outbox_event`
+table or relay task was created for it — an intentional absence, not an
+oversight (see the Stage 9.5 addendum below for the same "no consumer, no
+event" reasoning applied to `test_duration_signal`).
+
 ### Reliable event publishing: transactional outbox, not CDC
 
 Each context's schema includes its own `outbox_event` table (e.g.
@@ -460,8 +512,8 @@ handle at least the current and previous version during rollout.
 
 | Topic | Key | Producer | Consumers | Retention |
 |---|---|---|---|---|
-| `ingestion.pr-changed` | `installation_id:repository:pr_number` | Ingestion | Test Intelligence, PR Analysis, *Regression Prediction (Sub-stage 9.10 addendum)* | 7 days |
-| `ingestion.ci-run-completed` | `installation_id:repository:commit_sha` | Ingestion — *`POST /ingest/test-results`, not the GitHub webhook (Stage 9.2 addendum below)* | Test Intelligence, *Root Cause Analysis (Stage 9.9 addendum below)* | 7 days |
+| `ingestion.pr-changed` | `installation_id:repository:pr_number` | Ingestion | Test Intelligence, PR Analysis, *Regression Prediction (Sub-stage 9.10 addendum)*, *Engineering Metrics (Sub-stage 9.7 addendum)* | 7 days |
+| `ingestion.ci-run-completed` | `installation_id:repository:commit_sha` | Ingestion — *`POST /ingest/test-results`, not the GitHub webhook (Stage 9.2 addendum below)* | Test Intelligence, *Root Cause Analysis (Stage 9.9 addendum below)*, *Engineering Metrics (Sub-stage 9.7 addendum)* | 7 days |
 | `ingestion.coverage-report-received` *(Stage 9.4 addendum)* | `installation_id:repository:commit_sha` | Ingestion — `POST /ingest/coverage-report` | Test Intelligence | 7 days |
 | `ingestion.dependency-manifest-received` *(Stage 9.6 addendum)* | `installation_id:repository:commit_sha` | Ingestion — `POST /ingest/dependency-manifest` | Dependency Analysis | 7 days |
 | `test-intelligence.impact-computed` | `installation_id:repository:pr_number` | Test Intelligence | Root Cause Analysis | 30 days |
@@ -627,6 +679,7 @@ built.
 | *(Addendum, Stage 9.6)* Added a sixth schema, `dependency_analysis`, with `dependency_manifest_snapshot` storing **history** (a row per commit, never overwritten) rather than current-state-only like every other signal table; added `ingestion.dependency-manifest-received` | Overwriting per-repository like `file_coverage_signal`; folding into an existing topic | A manifest snapshot's whole future value (diffing across commits for 9.8, API Evolution Tracking) requires keeping each commit's snapshot queryable — overwriting would destroy exactly the data a downstream diffing capability needs. This is a genuinely different persistence shape than the other three Test Intelligence signals, which is itself part of the evidence that this doesn't belong in that context (see the ADR-0002 addendum). | DB Architect / user |
 | *(Addendum, launch-track Phase 1, 2026-07-07)* Started `run_relay_forever` per bounded-context outbox as a concurrent task in `worker.py`; added producer-side publish retry (`relay.py`) and consumer-side retry/dead-letter (`kafka.py`, new `{topic}.dlq` topics) | Leaving the relay unstarted and treating this as a future launch-readiness task; building a full backoff-with-persisted-state mechanism across process restarts | The relay was fully built and tested but never actually run — the entire event-driven pipeline was inert in any real deployment, a correctness gap, not a nice-to-have. A simpler poll-and-retry-per-cycle mechanism (no cross-restart backoff state) was chosen over a more elaborate one — a permanently-failing row retries every cycle rather than respecting a persisted backoff schedule, accepted as a known limitation given no alerting infra exists yet to page on it anyway | Staff Platform Engineer / user |
 | *(Addendum, Sub-stage 9.10)* Added a seventh schema, `regression_prediction`, shaped like an MVP analytical context (correlate, call LLM, publish) rather than a Test-Intelligence-style signal table; amended the already-frozen `root-cause.hypothesis-ready` payload to add nullable `suspected_file_path` | Joining `root_cause_analysis` as a second capability, read-time only (mirroring how 9.8 joined `dependency_analysis`) | Regression Prediction's dependencies span two different existing contexts (`test_intelligence`, `root_cause_analysis`), and its forward-looking "predict a future PR's regression risk from historical patterns" question shares no ubiquitous language with RCA's backward-looking "explain this one failure" — architecturally it's a much closer sibling of the MVP correlate-then-call-LLM contexts than of anything in Phase 2. See the ADR-0002 addendum for the full evaluation. | DB Architect / user |
+| *(Addendum, Sub-stage 9.7)* Added an eighth schema, `engineering_metrics`, with no outbox table and no new Kafka topic — consumes `ingestion.pr-changed`/`ingestion.ci-run-completed` directly as an independent consumer group; scoped to PR-flow + CI-health aggregation, not full DORA | Extending `pr_analysis`'s `pull_request` table with lifecycle timestamps; fabricating deployment/incident data to build full DORA now | A population-level flow statistic conflated into a per-PR-risk-score schema repeats the "everything dumped in one place" failure mode the Stage 9.4 threshold exists to catch; the raw `ingestion.pr-changed` payload already carries every field needed (`merged_at`/`closed_at`) verbatim, so no upstream context needed modification. Full DORA still has no real deployment ingestion source — fabricating one to unblock a roadmap item was rejected on the same evidence-before-speculation grounds as when 9.7 was first deferred. | DB Architect / user |
 
 ## Architecture Review checklist (exit criteria)
 

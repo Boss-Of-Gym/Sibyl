@@ -528,6 +528,48 @@ context rather than joining Root Cause Analysis, and the Stage 4 addendum
 for why `root-cause.hypothesis-ready` needed a new `suspected_file_path`
 field to make the left-hand flow possible at all.
 
+### 13. Engineering Metrics — PR-flow + CI-health projection and read-time aggregation (Sub-stage 9.7)
+
+```mermaid
+sequenceDiagram
+    participant Ing as Ingestion
+    participant EM as Engineering Metrics
+    participant PG as Postgres (engineering_metrics schema)
+    participant Client as API caller
+
+    Note over Ing,EM: Keeping both projections current (two independent triggers, same worker)
+    Ing->>EM: ingestion.pr-changed
+    activate EM
+    EM->>PG: upsert pr_lifecycle_projection (keyed by repository+pr_number)
+    deactivate EM
+    Ing->>EM: ingestion.ci-run-completed
+    activate EM
+    EM->>PG: upsert ci_run_projection (keyed by repository+ci_run_id)
+    deactivate EM
+
+    Note over Client,PG: Reading metrics (no LLM, no outbox — pure aggregation)
+    Client->>EM: GET .../engineering-metrics?windowDays=30
+    activate EM
+    EM->>PG: pr_lifecycle_projection rows opened_at >= now - windowDays
+    EM->>PG: ci_run_projection rows started_at >= now - windowDays
+    EM->>EM: compute_median(cycle times of merged rows), compute_ci_success_rate(failed counts), compute_median(ci durations)
+    EM-->>Client: EngineeringMetrics (counts + medians + success rate)
+    deactivate EM
+```
+
+Two independent projection triggers, same shape as Regression Prediction's
+own two-trigger flow above (§12) — but no `ReasoningPort` call and no
+outbox publish anywhere in this diagram, the first sub-stage where that's
+true. Statistics are computed at request time from the two projections
+(`compute_median`/`compute_ci_success_rate`, mirroring Test Intelligence's
+own read-time `list_slow_tests`/`list_coverage_gaps` ranking) rather than
+maintained as a rolling pre-computed signal — there's no downstream
+consumer to keep fresh incrementally, so recomputing per-request over a
+30-day window is simply the cheaper design. See the ADR-0002 addendum for
+why this is a new bounded context rather than extending PR Analysis or
+Test Intelligence, and the Stage 4 addendum for why it needed no new Kafka
+topic and no outbox table at all.
+
 *(Addendum, launch-track Phase 1, 2026-07-07)* Every diagram's observability
 annotations (checked off in this doc's own Architecture Review checklist
 below — "every diagram marks where tracing/metrics/logging are emitted")
