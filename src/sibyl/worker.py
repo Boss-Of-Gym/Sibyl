@@ -16,10 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sibyl.dependency_analysis.adapters.repository import DependencyAnalysisRepository
 from sibyl.dependency_analysis.application import DependencyAnalysisService
 from sibyl.identity.adapters.repository import InstallationRepository
+from sibyl.ingestion.adapters.db_models import IngestionOutboxEvent
 from sibyl.platform.config import Settings, get_settings
 from sibyl.platform.db import make_session_factory
-from sibyl.platform.events.kafka import KafkaConsumerClient
+from sibyl.platform.events.kafka import KafkaConsumerClient, KafkaProducerClient
 from sibyl.platform.events.outbox import OutboxRepository
+from sibyl.platform.events.relay import run_relay_forever
 from sibyl.platform.github.app_auth import GitHubAppAuthenticator
 from sibyl.platform.github.checks_client import GitHubChecksClient
 from sibyl.platform.observability import configure_observability, get_logger, get_meter, get_tracer
@@ -274,10 +276,17 @@ def _build_checks_notifiers(
 
 
 async def _run_consumer_group(
-    group_id: str, topics: list[str], bootstrap_servers: str, dispatcher: Handler
+    group_id: str,
+    topics: list[str],
+    bootstrap_servers: str,
+    dispatcher: Handler,
+    dlq_producer: KafkaProducerClient,
 ) -> None:
     consumer = KafkaConsumerClient(
-        topics=topics, bootstrap_servers=bootstrap_servers, group_id=group_id
+        topics=topics,
+        bootstrap_servers=bootstrap_servers,
+        group_id=group_id,
+        dlq_producer=dlq_producer,
     )
     await consumer.start()
     try:
@@ -315,23 +324,30 @@ async def run() -> None:
 
     session_factory = make_session_factory(settings)
     redis = Redis.from_url(settings.redis_url)
+    kafka_producer = KafkaProducerClient(settings.kafka_bootstrap_servers)
+    await kafka_producer.start()
+
+    ingestion_outbox_repository = OutboxRepository(IngestionOutboxEvent)
+    pr_analysis_outbox_repository = OutboxRepository(PrAnalysisOutboxEvent)
+    test_intelligence_outbox_repository = OutboxRepository(TestIntelligenceOutboxEvent)
+    root_cause_analysis_outbox_repository = OutboxRepository(RootCauseAnalysisOutboxEvent)
 
     reasoning_port = GuardedReasoningPort(
         AnthropicReasoningPort(settings.llm_provider_api_key, settings.llm_provider_model)
     )
     pr_analysis_service = PrAnalysisService(
-        PrAnalysisRepository(), OutboxRepository(PrAnalysisOutboxEvent), reasoning_port
+        PrAnalysisRepository(), pr_analysis_outbox_repository, reasoning_port
     )
     checks_notifier, root_cause_checks_notifier = _build_checks_notifiers(settings, redis)
     test_intelligence_service = TestIntelligenceService(
-        TestIntelligenceRepository(), OutboxRepository(TestIntelligenceOutboxEvent)
+        TestIntelligenceRepository(), test_intelligence_outbox_repository
     )
     root_cause_reasoning_port = RootCauseGuardedReasoningPort(
         RootCauseAnthropicReasoningPort(settings.llm_provider_api_key, settings.llm_provider_model)
     )
     root_cause_analysis_service = RootCauseAnalysisService(
         RootCauseAnalysisRepository(),
-        OutboxRepository(RootCauseAnalysisOutboxEvent),
+        root_cause_analysis_outbox_repository,
         root_cause_reasoning_port,
     )
     dependency_analysis_service = DependencyAnalysisService(DependencyAnalysisRepository())
@@ -398,6 +414,14 @@ async def run() -> None:
             _run_health_server(
                 _build_health_app(session_factory, redis), settings.worker_health_port
             ),
+            run_relay_forever(session_factory, ingestion_outbox_repository, kafka_producer),
+            run_relay_forever(session_factory, pr_analysis_outbox_repository, kafka_producer),
+            run_relay_forever(
+                session_factory, test_intelligence_outbox_repository, kafka_producer
+            ),
+            run_relay_forever(
+                session_factory, root_cause_analysis_outbox_repository, kafka_producer
+            ),
             _run_consumer_group(
                 "pr-analysis-worker",
                 [
@@ -408,6 +432,7 @@ async def run() -> None:
                 ],
                 settings.kafka_bootstrap_servers,
                 pr_analysis_dispatcher,
+                kafka_producer,
             ),
             _run_consumer_group(
                 "test-intelligence-worker",
@@ -418,6 +443,7 @@ async def run() -> None:
                 ],
                 settings.kafka_bootstrap_servers,
                 test_intelligence_dispatcher,
+                kafka_producer,
             ),
             _run_consumer_group(
                 "root-cause-analysis-worker",
@@ -429,15 +455,18 @@ async def run() -> None:
                 ],
                 settings.kafka_bootstrap_servers,
                 root_cause_analysis_dispatcher,
+                kafka_producer,
             ),
             _run_consumer_group(
                 "dependency-analysis-worker",
                 ["ingestion.dependency-manifest-received"],
                 settings.kafka_bootstrap_servers,
                 dependency_analysis_dispatcher,
+                kafka_producer,
             ),
         )
     finally:
+        await kafka_producer.stop()
         await redis.aclose()
 
 

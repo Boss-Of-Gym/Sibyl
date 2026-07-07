@@ -409,6 +409,51 @@ Short retention on raw ingestion topics (7 days) — they're a relay mechanism, 
 system of record (Postgres is); longer retention on computed-result topics (30
 days) supports consumer replay/recovery without treating Kafka as a database.
 
+*(Addendum, launch-track Phase 1 continued, 2026-07-07)* **Found and fixed a
+gap more severe than any prior one in this project: the relay process
+described above (`platform/events/relay.py`'s `relay_once`) was never
+actually invoked anywhere in the running application** — not in `worker.py`,
+not in the API, not as a separate process in `docker-compose.yml` or the
+Helm chart. It was fully implemented and covered by
+`tests/integration/test_relay.py`, but that test was the *only* caller in
+the entire codebase. In a real deployment, `ingestion/api.py` would durably
+write every webhook to its outbox table and **nothing would ever publish
+those rows to Kafka** — every downstream consumer (Test Intelligence, PR
+Analysis, Root Cause Analysis, Dependency Analysis) would receive nothing,
+even though each is independently correct and fully tested in isolation via
+testcontainers tests that call `relay_once` directly. This is why the gap
+survived nine implementation sub-stages undetected — every test proved its
+own consumer works if fed an event, and no test asked "does anything feed
+it, for real."
+
+Fixed by adding `run_relay_forever` (a poll loop wrapping `relay_once`) and
+starting one per bounded-context outbox (`ingestion`, `pr_analysis`,
+`test_intelligence`, `root_cause_analysis` — `dependency_analysis` has no
+outbox, nothing downstream consumes it yet) as concurrent tasks in
+`worker.py`'s `asyncio.gather`, sharing one `KafkaProducerClient` with the
+consumer side's dead-letter publishing (below).
+
+Also implemented, in the same pass, the retry/dead-letter mechanics Stage 6
+§§7–8 had specified but never built:
+- **Producer side** (`relay.py`): each event publish gets up to 5 attempts
+  with exponential backoff (`outbox.publish_retry_total`); a row that
+  exhausts retries is simply left unpublished (not dropped, not endlessly
+  retried within one cycle) — the next relay poll picks it up again.
+- **Consumer side** (`kafka.py`): each handler invocation gets the same
+  5-attempt exponential backoff (`consumer.retry_total`); a
+  `MalformedEventError` (existing per-context "malformed payload"
+  exceptions now inherit from this shared type) skips retries entirely and
+  dead-letters immediately (`consumer.malformed_event_total`); retries
+  exhausted also dead-letters (`consumer.dead_lettered_total`). Dead-lettered
+  messages publish to a new `{source_topic}.dlq` topic
+  (e.g. `ingestion.pr-changed.dlq`) carrying the original payload and
+  failure reason — auto-created on first publish, like every other topic in
+  this catalog (no topic is explicitly provisioned anywhere).
+- **Not implemented**: on-call alerting when DLQ depth exceeds a threshold
+  (Stage 6 §8's last step) — this needs Alertmanager, which isn't
+  provisioned anywhere in `docker-compose.yml` or the Helm chart. Tracked as
+  a genuine Stage 7 infra gap, not silently skipped.
+
 ### Redis usage catalog
 
 | Use case | Key pattern | TTL / eviction | Owning context | Why Redis, specifically |
@@ -493,6 +538,13 @@ exist on `pr_risk_assessment`, and `root_cause_hypothesis` was itself missing
 implemented: see `docs/09-implementation/9.1-pr-analysis/README.md` and
 `docs/09-implementation/9.9-root-cause-analysis/README.md` Changelogs.
 
+*(Addendum, launch-track Phase 1 continued, 2026-07-07)* The outbox relay
+(`relay_once`) was never actually invoked in any running process — see the
+addendum above the Kafka topic catalog for the full finding and fix
+(`run_relay_forever` now runs per bounded-context outbox in `worker.py`),
+plus the retry/dead-letter mechanics Stage 6 §§7–8 specified but never
+built.
+
 ## Decisions log
 
 | Decision | Alternatives considered | Rejected because | Owner role |
@@ -508,6 +560,7 @@ implemented: see `docs/09-implementation/9.1-pr-analysis/README.md` and
 | *(Addendum, Stage 9.5)* `alembic/env.py` now sets `include_schemas=True` on both `context.configure()` calls | Leaving it unset (the default) | Without it, autogenerate can't see already-existing tables in any non-default schema when computing a diff — never surfaced before because every prior migration was either brand-new-branch or didn't need a second revision; the first real incremental migration on an existing branch (this one) proposed re-creating all 7 already-existing `test_intelligence` tables. Would have blocked every future incremental migration on any of the 5 branches, not just this one. | Staff Backend Engineer |
 | *(Addendum, Stage 9.4)* Added `file_coverage_signal` to `test_intelligence` as a snapshot (not rolling-window) signal; added `ingestion.coverage-report-received` (new topic, `POST /ingest/coverage-report` producer) | Computing a rolling coverage trend like flakiness/duration; reusing `ingestion.ci-run-completed` instead of a dedicated coverage topic | Coverage percentage is a fact about a specific commit, not a classification that benefits from smoothing across history — a rolling window would answer a question nobody asked. A separate topic (rather than folding coverage into the existing test-results payload) keeps the two CI-job-facing contracts independently versionable — a CI job that only reports coverage shouldn't have to fabricate a per-test breakdown just to satisfy one schema. | DB Architect / user |
 | *(Addendum, Stage 9.6)* Added a sixth schema, `dependency_analysis`, with `dependency_manifest_snapshot` storing **history** (a row per commit, never overwritten) rather than current-state-only like every other signal table; added `ingestion.dependency-manifest-received` | Overwriting per-repository like `file_coverage_signal`; folding into an existing topic | A manifest snapshot's whole future value (diffing across commits for 9.8, API Evolution Tracking) requires keeping each commit's snapshot queryable — overwriting would destroy exactly the data a downstream diffing capability needs. This is a genuinely different persistence shape than the other three Test Intelligence signals, which is itself part of the evidence that this doesn't belong in that context (see the ADR-0002 addendum). | DB Architect / user |
+| *(Addendum, launch-track Phase 1, 2026-07-07)* Started `run_relay_forever` per bounded-context outbox as a concurrent task in `worker.py`; added producer-side publish retry (`relay.py`) and consumer-side retry/dead-letter (`kafka.py`, new `{topic}.dlq` topics) | Leaving the relay unstarted and treating this as a future launch-readiness task; building a full backoff-with-persisted-state mechanism across process restarts | The relay was fully built and tested but never actually run — the entire event-driven pipeline was inert in any real deployment, a correctness gap, not a nice-to-have. A simpler poll-and-retry-per-cycle mechanism (no cross-restart backoff state) was chosen over a more elaborate one — a permanently-failing row retries every cycle rather than respecting a persisted backoff schedule, accepted as a known limitation given no alerting infra exists yet to page on it anyway | Staff Platform Engineer / user |
 
 ## Architecture Review checklist (exit criteria)
 

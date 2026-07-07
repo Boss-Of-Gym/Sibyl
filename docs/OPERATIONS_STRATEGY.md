@@ -87,16 +87,19 @@ header, no further drift found.
    `test_impact.computed_total`, `flaky_detection.signal_updated_total`,
    `root_cause.completed_total`, `coverage_intelligence.files_updated_total`)
    and the `ingest.webhook` span + its 4 counters in `ingestion/api.py`.
-   **Discovered, real, NOT mechanical follow-up:** the Kafka consumer
-   retry/dead-letter mechanism Stage 6 §8 promises (`consumer.retry_total`,
-   `consumer.dead_lettered_total`, `consumer.malformed_event_total`,
-   `{topic}.dlq` topics, exponential backoff, on-call alerting) does not
-   exist in the codebase at all — `platform/events/kafka.py`'s
-   `consume_forever` has no retry/backoff logic; an unhandled exception in
-   any handler just propagates uncaught. Deliberately did not fabricate
-   metrics for a mechanism that isn't built. This is a real reliability gap,
-   sized more like its own follow-up pass than a quick add-on — needs an
-   explicit decision on when to build it, separate from instrumentation work.
+   **Discovered, then fixed the same day in a dedicated follow-up pass**
+   (see the Stage 4 addendum in `docs/04-database/README.md` for the full
+   story): the Kafka consumer retry/dead-letter mechanism Stage 6 §8
+   promises didn't exist at all, and — a far bigger finding uncovered while
+   investigating it — **the outbox relay itself was never running in any
+   process**, meaning the entire event-driven pipeline was inert in a real
+   deployment despite every individual consumer being correctly built and
+   tested in isolation. Both fixed together: `run_relay_forever` now runs
+   per bounded-context outbox in `worker.py`; `kafka.py`/`relay.py` both
+   retry with exponential backoff (5 attempts) and dead-letter to
+   `{topic}.dlq` topics on exhaustion or immediately on a
+   `MalformedEventError`. **Still not implemented**: on-call alerting on DLQ
+   depth — needs Alertmanager, not provisioned in this project's infra.
    Also resolved a related infra inconsistency while here: `infra/prometheus/prometheus.yml`
    expected direct-scrape `/metrics` endpoints on `api`/`worker` that were
    never implemented (only OTLP push was ever wired) — removed those scrape
@@ -207,13 +210,13 @@ Every remaining sub-stage follows the same loop used for
 - ~~**`worker.py` has no HTTP server**~~ — resolved 2026-07-07: added
   `/healthz`/`/readyz` on `worker_health_port` (default 8001), matching the
   Helm chart's existing probes.
-- **Kafka consumer retry/dead-letter mechanism doesn't exist** — discovered
-  2026-07-07 while instrumenting `consumer.process`. Stage 6 §8 promises
-  bounded retry with exponential backoff, a `{topic}.dlq` topic per source
-  topic, and on-call alerting on DLQ depth; `platform/events/kafka.py`'s
-  `consume_forever` has none of this — an unhandled handler exception simply
-  propagates. Needs an explicit decision on priority/timing — this is a real
-  reliability gap, not a quick add-on to an instrumentation pass.
+- ~~**Kafka consumer retry/dead-letter mechanism doesn't exist**~~ —
+  resolved 2026-07-07, same day it was discovered, in a dedicated follow-up
+  pass (user chose to prioritize this over starting Phase 2). Investigating
+  it also surfaced a much bigger gap, fixed in the same pass: **the outbox
+  relay was never running in any process, at all** — see the Stage 4
+  addendum in `docs/04-database/README.md`. On-call alerting on DLQ depth
+  remains unbuilt (needs Alertmanager, not provisioned).
 - **`auth.exchange` (GitHub OAuth login) and inbound API rate limiting are
   both unimplemented** — confirmed 2026-07-07 while scoping the
   OpenTelemetry pass (Stage 6 §5 describes both). Consistent with the
@@ -286,6 +289,14 @@ section). Until that's wired:
   addendum and 9.5's sub-stage doc) — `include_schemas=True` was missing
   from `env.py`. If a *new* schema-comparison anomaly appears, check that
   fix is still in place before assuming a new bug.
+- **Any consumer never receiving events at all** (not just one correlation
+  stuck, *nothing* arriving): check the relevant `outbox_event` table for
+  rows with `published_at IS NULL` piling up — that means the relay for that
+  schema isn't running or is stuck, not that the consumer is broken. This
+  was a real, previously-undetected bug (fixed 2026-07-07, see the Stage 4
+  addendum): the relay was never started in any process at all until then.
+  If a specific message repeatedly fails, check `{topic}.dlq` for it before
+  assuming it vanished — dead-lettered messages are never silently dropped.
 
 ### Flaky-test quarantine, in practice
 

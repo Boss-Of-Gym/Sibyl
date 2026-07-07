@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sibyl.platform.events.errors import MalformedEventError
 from sibyl.platform.events.outbox import OutboxRepository
 from sibyl.pr_analysis.adapters.repository import PrAnalysisRepository
 from sibyl.pr_analysis.domain.flaky_matching import match_known_flaky_areas
@@ -11,7 +12,7 @@ from sibyl.pr_analysis.domain.models import PrRiskContext
 from sibyl.pr_analysis.domain.ports import ReasoningPort
 
 
-class MalformedPrChangedPayload(Exception):
+class MalformedPrChangedPayload(MalformedEventError):
     pass
 
 

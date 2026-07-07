@@ -498,17 +498,19 @@ above rather than being diagram-specific:
   because both fell into one generic `except Exception`. `llm.tokens_used`
   and `llm.latency_ms` are recorded only on the success path, exactly as
   annotated.
-- **§8 (event consumer failure & dead-letter handling)** — only the `consumer.process`
-  span and `consumer.processed_total` (success path) are implemented. The
-  retry/dead-letter mechanism itself (`consumer.retry_total`,
-  `consumer.dead_lettered_total`, `consumer.malformed_event_total`, the
-  `{topic}.dlq` topics, exponential backoff, on-call alerting) **does not
-  exist in the codebase** — `platform/events/kafka.py`'s `consume_forever`
-  has no retry/backoff/DLQ logic at all; an unhandled exception simply
-  propagates. This was discovered while wiring instrumentation, not
-  previously tracked. Deliberately not fabricating metrics for a mechanism
-  that isn't there — see `docs/OPERATIONS_STRATEGY.md` §1 for this as a
-  tracked follow-up.
+- **§8 (event consumer failure & dead-letter handling)** — ~~only the
+  `consumer.process` span and `consumer.processed_total` (success path) were
+  implemented; the retry/dead-letter mechanism itself did not exist in the
+  codebase at all~~. **Fixed in a follow-up pass the same day** (see the
+  Stage 4 addendum above the Kafka topic catalog for the full finding —
+  discovering this also revealed the outbox relay was never running at all,
+  a far bigger gap): `platform/events/kafka.py`'s `consume_forever` now
+  retries each handler call up to 5 times with exponential backoff
+  (`consumer.retry_total`), dead-letters to a new `{topic}.dlq` topic on
+  exhaustion (`consumer.dead_lettered_total`) or immediately for a
+  `MalformedEventError` (`consumer.malformed_event_total`, no retries — not
+  transient). **Still not implemented**: on-call alerting when DLQ depth
+  exceeds a threshold — needs Alertmanager, not provisioned anywhere.
 - **§1–4, §9–10 (per-capability named counters** — e.g.
   `pr_analysis.completed_total`, `test_impact.computed_total`,
   `flaky_detection.signal_updated_total`, `root_cause.completed_total`,
@@ -523,10 +525,14 @@ above rather than being diagram-specific:
   (`auth.rejected_total`/`auth.forbidden_total`) and the rate-limiting check
   it depicts are also both still unimplemented in `identity/auth.py` —
   unrelated to this pass, tracked separately.
-- **§7 (ingestion failure & retry/backoff)** — not yet wired; `ingestion/api.py`
-  already has the right branches (signature/malformed/dedup checks), just
-  needs the `ingest.webhook` span and its four counters added at each
-  existing branch.
+- **§7 (ingestion failure & retry/backoff)** — the relay-retry half is now
+  implemented (`outbox.publish_retry_total`, see the Stage 4 addendum above
+  the Kafka topic catalog). The API-side half is not yet wired:
+  `ingestion/api.py` already has the right branches (signature/malformed/dedup
+  checks), just needs the `ingest.webhook` span and its 3 remaining counters
+  (`ingestion.malformed_total`/`auth_failed_total`/`internal_error_total`)
+  added at each existing branch — mechanical follow-up, not a design
+  question.
 
 ## Decisions log
 

@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sibyl.platform.events.errors import MalformedEventError
 from sibyl.platform.events.outbox import OutboxRepository
 from sibyl.test_intelligence.adapters.repository import TestIntelligenceRepository
 from sibyl.test_intelligence.domain.coverage import compute_coverage_pct
@@ -13,7 +14,7 @@ from sibyl.test_intelligence.domain.mapping import map_changed_files_to_affected
 from sibyl.test_intelligence.domain.models import CoverageReport, TestResultReport
 
 
-class MalformedPrChangedPayload(Exception):
+class MalformedPrChangedPayload(MalformedEventError):
     pass
 
 
