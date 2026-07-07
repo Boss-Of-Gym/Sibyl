@@ -393,6 +393,7 @@ sequenceDiagram
     activate TI
     Note over TI: no LLM, no correlation — a snapshot overwrite per (repository, file_path)
     TI->>PG: upsert file_coverage_signal for each reported file
+    TI->>Kafka: (via outbox) publish test-intelligence.coverage-computed per file (new, Sub-stage 9.11 addendum)
     Note over TI: metric coverage_intelligence.files_updated_total++
     deactivate TI
 
@@ -405,9 +406,15 @@ sequenceDiagram
 
 This intentionally does **not** follow §6's LLM-fallback pattern (no LLM
 involved — this is Test Impact Analysis's/Flaky Detection's cost profile,
-not PR Analysis's/Root Cause Analysis's, per the Stage 9.4 sub-stage doc) and
-does **not** publish a downstream event (no consumer exists yet, same
-reasoning as 9.5's `test_duration_signal`).
+not PR Analysis's/Root Cause Analysis's, per the Stage 9.4 sub-stage doc).
+
+*(Addendum, Sub-stage 9.11, 2026-07-07)* This diagram originally noted "does
+not publish a downstream event (no consumer exists yet, same reasoning as
+9.5's `test_duration_signal`)" — no longer true. Release Risk Analysis
+(§14) is a real consumer now, which is exactly the condition that original
+reasoning said would justify adding one. Test Intelligence now publishes
+`test-intelligence.coverage-computed` per file on every coverage report,
+shown in the diagram above.
 
 ### 10. Dependency Analysis — ingest + latest-per-ecosystem read (Stage 9.6 addendum)
 
@@ -569,6 +576,63 @@ consumer to keep fresh incrementally, so recomputing per-request over a
 why this is a new bounded context rather than extending PR Analysis or
 Test Intelligence, and the Stage 4 addendum for why it needed no new Kafka
 topic and no outbox table at all.
+
+### 14. Release Risk Analysis — three-signal projection + fused merge-readiness score (Sub-stage 9.11)
+
+```mermaid
+sequenceDiagram
+    participant Ing as Ingestion
+    participant TI as Test Intelligence
+    participant RP as Regression Prediction
+    participant RR as Release Risk Analysis
+    participant PG as Postgres (release_risk_analysis schema)
+    participant Client as API caller
+
+    Note over Ing,RR: Keeping two of three projections current (independent triggers)
+    Ing->>RR: ingestion.ci-run-completed
+    activate RR
+    RR->>PG: upsert ci_health_projection (keyed by repository+ci_run_id)
+    deactivate RR
+    TI->>RR: test-intelligence.coverage-computed (new event, this sub-stage)
+    activate RR
+    RR->>PG: upsert coverage_signal_projection (keyed by repository+file_path)
+    deactivate RR
+
+    Note over RP,Client: Assessment trigger — the rarest, most PR-specific signal
+    RP->>RR: regression-prediction.completed
+    activate RR
+    RR->>PG: upsert regression_signal_projection (keyed by repository+pr_number)
+    RR->>PG: ci_health_projection — most recent 20 runs for this repository
+    RR->>PG: coverage_signal_projection — all known files for this repository
+    RR->>RR: compute_ci_success_rate(recent failed counts), compute_average_coverage_pct(files)
+    RR->>RR: compute_release_risk_score(regression_probability, ci_success_rate, coverage_pct) — degrades gracefully if any input is missing
+    RR->>PG: insert release_risk_assessment row
+    RR->>RR: publish release-risk.completed
+    deactivate RR
+
+    Note over Client,PG: Reading the latest assessment (no LLM anywhere in this flow)
+    Client->>RR: GET .../pulls/{prNumber}/release-risk
+    RR->>PG: latest release_risk_assessment for repository+pr_number
+    RR-->>Client: ReleaseRisk (score + considered signals + raw inputs)
+```
+
+Three independent projection paths feeding one fused assessment — a
+three-way version of Regression Prediction's own two-trigger shape (§12),
+but with no `ReasoningPort` call anywhere: `compute_release_risk_score` is
+a deterministic weighted average, the same "pure statistics" shape as
+Engineering Metrics (§13), not the MVP correlate-then-call-LLM shape. The
+assessment computation is triggered by `regression-prediction.completed`
+specifically — the rarest and most PR-specific of the three signals —
+rather than racing against the other two on an earlier-arriving event; CI
+health and coverage are read from projections this context already
+materializes independently, not fetched synchronously from Engineering
+Metrics or Test Intelligence. `release-risk.completed` has no consumer yet
+in this repository, but it is not speculative infrastructure: 9.12 Release
+Advisor's own frozen roadmap description is to consume exactly this event.
+See the ADR-0002 addendum for the full three-way bounded-context
+evaluation and what "release" honestly means without deployment/tag
+ingestion, and the Stage 4 addendum for why `test_intelligence` needed a
+new event to make the top-left flow possible at all.
 
 *(Addendum, launch-track Phase 1, 2026-07-07)* Every diagram's observability
 annotations (checked off in this doc's own Architecture Review checklist

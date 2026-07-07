@@ -359,3 +359,119 @@ need none from day one), no new topic, no new event contract. Full DORA
 (deployment frequency, lead time to production, change failure rate, MTTR)
 remains explicitly deferred, now for a documented reason (no deployment
 ingestion source) rather than an open-ended "later."
+
+## Addendum (Sub-stage 9.11, 2026-07-07): Release Risk Analysis is a new, ninth bounded context — fusing three signals that span three different existing contexts, and what "release" honestly means here
+
+9.11's own frozen dependency list (`9.4` Coverage Intelligence, `9.7`
+Engineering Metrics, `9.10` Regression Prediction) already signals
+something structurally different from every addendum before it: its inputs
+live in **three different** existing contexts, not one (9.4/9.5/9.8's join
+cases) or two (9.10's fan-in case). Running the same ubiquitous-language
+evaluation this project has applied at every prior fork, against all three
+candidates:
+
+- **Coverage Intelligence** answers "which files/areas lack coverage right
+  now" — a repository-wide structural gap, not something scoped to a
+  specific PR or moment of decision.
+- **Engineering Metrics** answers "how healthy is the PR flow and CI
+  pipeline in aggregate over a stated window" — a reporting-shaped,
+  calendar-windowed statistic.
+- **Regression Prediction** answers "how likely is *this* PR to cause a
+  regression" — a single-PR, LLM-correlated probability.
+
+Release Risk Analysis asks a fourth, different question: "given all three
+of the above, is *this* PR safe to ship right now" — a weighted fusion of
+three independently-computed numbers into one decision-support score, not
+a restatement of any one of them. None of the three pass the "same fact"
+test individually, and fusing three genuinely different facts into one
+new fact is itself evidence of a new bounded context, the same reasoning
+that already split Dependency Analysis (9.6) and Regression Prediction
+(9.10) out on their own — just a three-way version of the same test.
+**Decision: Release Risk Analysis is a new, ninth bounded context.**
+
+**What "release" honestly means, given this project has no deployment/tag
+ingestion source anywhere** (the same gap that keeps full DORA deferred
+under the Sub-stage 9.7 addendum above): Stage 9's roadmap text says
+"release-level score," but there is no ingested entity called a release.
+Re-reading Stage 1's own persona evidence (`docs/01-problem-discovery/README.md`,
+persona 3, "small-team release decision-maker") shows the actual described
+pain is a **merge-time decision** — "is it OK to ship right now" — not a
+literal post-merge deployment artifact. The honestly-buildable
+interpretation, consistent with the persona's real story and with every
+other capability in this system being PR/commit-scoped, is: **a per-PR
+merge-readiness score**, computed at the moment a Regression Prediction
+result becomes available for that PR. This mirrors the Sub-stage 9.7
+addendum's own move (narrowing an over-claiming roadmap phrase to what the
+real data model supports) rather than inventing a "release" concept this
+system has no evidence for.
+
+**No LLM in this capability** — the fusion itself is a deterministic
+weighted average of three already-computed numbers
+(`compute_release_risk_score`), matching Engineering Metrics's "pure
+statistics" shape rather than the MVP correlate-then-call-LLM shape. This
+is deliberate: Stage 9's own roadmap text reserves the LLM-generated
+narrative for 9.12 (Release Advisor), which "turns the risk score into an
+actual LLM-generated go/no-go narrative" — 9.11 produces the score, 9.12
+(not yet built) will narrate it.
+
+**Getting three cross-context signals without violating the
+no-cross-schema-reads rule** — none of the three signals are read via a
+synchronous cross-context call:
+- Regression Prediction already publishes `regression-prediction.completed`
+  — consumed directly into a local projection, the ordinary case.
+- Engineering Metrics publishes nothing (by its own Stage 4 addendum
+  design). Rather than depending on its schema or API, Release Risk
+  Analysis builds its **own** tiny local projection consuming
+  `ingestion.ci-run-completed` directly — the same "cheapest integration,
+  consume the raw topic directly" pattern Engineering Metrics itself
+  established, computed independently rather than through Engineering
+  Metrics at all.
+- Coverage Intelligence (inside Test Intelligence) published no event of
+  any kind — a real gap, not a design choice, per the Stage 4 addendum's
+  own "no consumer, no event" reasoning at the time. A real consumer now
+  exists, which is exactly the condition that same addendum said would
+  justify adding one. **Required amending an already-frozen event
+  contract**: Test Intelligence now publishes a new
+  `test-intelligence.coverage-computed` event per file whenever coverage is
+  recomputed — the same class of change as 9.10's `suspected_file_path`
+  amendment to `root-cause.hypothesis-ready`.
+
+**Trigger design mirrors Root Cause Analysis's own multi-input correlation
+(§4)**: rather than triggering on the earliest-arriving signal (which would
+race against the other two), Release Risk Analysis recomputes on
+`regression-prediction.completed` — the rarest, slowest-arriving, and most
+PR-specific signal — reading its own already-materialized local
+projections (recent CI runs, current coverage-by-file) for the other two.
+CI health is computed over the **most recent 20 CI runs** (a fixed sample
+size, mirroring Test Intelligence's own `get_recent_statuses`/
+`get_recent_durations` convention), not a calendar window like Engineering
+Metrics — a deliberately different convention for a differently-shaped
+question (a recency-weighted reliability signal feeding a decision score,
+not a reporting-window statistic).
+
+Alternatives considered:
+- **Join `regression_prediction` as a second capability**, mirroring how
+  API Evolution Tracking joined Dependency Analysis. Rejected: unlike 9.8
+  (a diff computed from two rows already owned by the same table), two of
+  Release Risk Analysis's three inputs (coverage, CI health) have nothing
+  to do with Regression Prediction's own domain — forcing it in would
+  recreate the exact "everything dumped in one place" failure mode the
+  Stage 9.4 threshold exists to catch, one context over.
+- **Treat "release" as requiring real deployment/tag data and defer 9.11
+  entirely**, the same way full DORA remains deferred. Rejected: 9.11's own
+  frozen dependency list never actually required deployment data — only
+  9.4/9.7/9.10, all already built — so deferring further would be
+  under-building relative to what the frozen contracts actually promise,
+  not an honest gap the way full DORA is.
+
+Consequence: a ninth bounded context and Postgres schema
+(`release_risk_analysis`), with `regression_signal_projection`,
+`ci_health_projection`, and `coverage_signal_projection` as local
+projections of the three upstream signals, a `release_risk_assessment`
+result table (append-only, like `regression_prediction`/
+`pr_risk_assessment` — "latest" is the newest `computed_at`), and its own
+outbox (`release-risk.completed`, with no consumer yet — a known,
+frozen-roadmap consumer, 9.12 Release Advisor, not speculative
+infrastructure the way an unconsumed event would otherwise be). Required
+amending Test Intelligence's already-frozen Stage 4 contract to add
+`test-intelligence.coverage-computed`.

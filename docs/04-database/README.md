@@ -486,6 +486,102 @@ table or relay task was created for it — an intentional absence, not an
 oversight (see the Stage 9.5 addendum below for the same "no consumer, no
 event" reasoning applied to `test_duration_signal`).
 
+*(Addendum, Sub-stage 9.11)* **`release_risk_analysis`** — a new, ninth
+schema (see the ADR-0002 addendum: fuses three signals spanning three
+different existing contexts into a per-PR merge-readiness score):
+
+```mermaid
+erDiagram
+    REGRESSION_SIGNAL_PROJECTION {
+        uuid id PK
+        uuid installation_id "scoping key, not a FK"
+        text repository
+        int pr_number
+        text head_sha
+        float regression_probability
+        timestamptz computed_at
+    }
+    CI_HEALTH_PROJECTION {
+        uuid id PK
+        uuid installation_id "scoping key, not a FK"
+        text repository
+        bigint ci_run_id
+        int passed_count
+        int failed_count
+        timestamptz completed_at
+    }
+    COVERAGE_SIGNAL_PROJECTION {
+        uuid id PK
+        uuid installation_id "scoping key, not a FK"
+        text repository
+        text file_path
+        float coverage_pct
+        timestamptz computed_at
+    }
+    RELEASE_RISK_ASSESSMENT {
+        uuid id PK
+        uuid installation_id "scoping key, not a FK"
+        text repository
+        int pr_number
+        text head_sha
+        float risk_score
+        jsonb considered_signals
+        float regression_probability "nullable"
+        float ci_success_rate "nullable"
+        float coverage_pct "nullable"
+        timestamptz computed_at
+    }
+```
+
+Three local projections, one per upstream signal, each populated by its own
+consumer path rather than a cross-schema read: `REGRESSION_SIGNAL_PROJECTION`
+from `regression-prediction.completed` (upserted by `repository`+`pr_number`);
+`CI_HEALTH_PROJECTION` directly from the raw `ingestion.ci-run-completed`
+topic (upserted by `repository`+`ci_run_id`) — the same "consume the raw
+topic directly" pattern Engineering Metrics established, computed
+independently rather than depending on Engineering Metrics's own schema or
+API; `COVERAGE_SIGNAL_PROJECTION` from a **new** event,
+`test-intelligence.coverage-computed` (upserted by `repository`+`file_path`)
+— see the Stage 4 addendum on `test_intelligence` below for why this event
+didn't exist before now.
+
+`RELEASE_RISK_ASSESSMENT` is computed on `regression-prediction.completed`
+(the rarest, most PR-specific of the three triggers) by reading the other
+two projections at that moment: CI success rate over the **most recent 20
+CI runs** (`get_recent_ci_runs`, mirroring Test Intelligence's own
+`get_recent_statuses`/`get_recent_durations` fixed-sample-size convention,
+not a calendar window like Engineering Metrics), and average coverage
+across all currently-known files. Any of the three inputs may be
+unavailable (e.g. no CI runs recorded yet) — `compute_release_risk_score`
+degrades gracefully by averaging only the signals actually present and
+recording which ones (`considered_signals`), rather than assuming a
+worst-case or best-case value for a missing signal. Rows are **append-only**
+like `regression_prediction`/`pr_risk_assessment` — "latest" is the newest
+`computed_at`, not a keyed upsert. No LLM call anywhere in this context —
+`compute_release_risk_score` is a deterministic weighted average, matching
+Engineering Metrics's pure-statistics shape; the LLM-generated narrative is
+reserved for the not-yet-built 9.12 (Release Advisor).
+
+This context does have an outbox (`release-risk.completed`) despite having
+no consumer *yet* — unlike `test_duration_signal`'s deliberately-unbuilt
+event (Stage 9.5 addendum, genuinely no planned consumer), 9.12 Release
+Advisor's own frozen roadmap description is explicitly "turns the risk
+score into an actual LLM-generated go/no-go narrative," i.e. a named,
+certain future consumer of exactly this event — not speculative
+infrastructure.
+
+**Required amending an already-frozen Stage 4 contract**: Test Intelligence
+(`test_intelligence`, approved at Stage 9.4) previously computed
+`file_coverage_signal` with no corresponding Kafka event — the Stage 9.5
+addendum's own reasoning at the time was "no consumer, no event." A real
+consumer (this context) now exists, which is exactly the condition that
+reasoning said would justify adding one. Test Intelligence now publishes
+`test-intelligence.coverage-computed` (`{repository, file_path,
+coverage_pct, computed_at}`) once per file whenever
+`handle_coverage_report_received` runs — the same class of frozen-contract
+amendment as 9.10's `suspected_file_path` addition to
+`root-cause.hypothesis-ready`.
+
 ### Reliable event publishing: transactional outbox, not CDC
 
 Each context's schema includes its own `outbox_event` table (e.g.
@@ -513,14 +609,16 @@ handle at least the current and previous version during rollout.
 | Topic | Key | Producer | Consumers | Retention |
 |---|---|---|---|---|
 | `ingestion.pr-changed` | `installation_id:repository:pr_number` | Ingestion | Test Intelligence, PR Analysis, *Regression Prediction (Sub-stage 9.10 addendum)*, *Engineering Metrics (Sub-stage 9.7 addendum)* | 7 days |
-| `ingestion.ci-run-completed` | `installation_id:repository:commit_sha` | Ingestion — *`POST /ingest/test-results`, not the GitHub webhook (Stage 9.2 addendum below)* | Test Intelligence, *Root Cause Analysis (Stage 9.9 addendum below)*, *Engineering Metrics (Sub-stage 9.7 addendum)* | 7 days |
+| `ingestion.ci-run-completed` | `installation_id:repository:commit_sha` | Ingestion — *`POST /ingest/test-results`, not the GitHub webhook (Stage 9.2 addendum below)* | Test Intelligence, *Root Cause Analysis (Stage 9.9 addendum below)*, *Engineering Metrics (Sub-stage 9.7 addendum)*, *Release Risk Analysis (Sub-stage 9.11 addendum)* | 7 days |
 | `ingestion.coverage-report-received` *(Stage 9.4 addendum)* | `installation_id:repository:commit_sha` | Ingestion — `POST /ingest/coverage-report` | Test Intelligence | 7 days |
 | `ingestion.dependency-manifest-received` *(Stage 9.6 addendum)* | `installation_id:repository:commit_sha` | Ingestion — `POST /ingest/dependency-manifest` | Dependency Analysis | 7 days |
 | `test-intelligence.impact-computed` | `installation_id:repository:pr_number` | Test Intelligence | Root Cause Analysis | 30 days |
 | `test-intelligence.flaky-signal-updated` | `installation_id:repository:test_identifier` | Test Intelligence | PR Analysis, *Root Cause Analysis (Stage 9.9 addendum below)* | 30 days (compacted on key) |
+| `test-intelligence.coverage-computed` *(Sub-stage 9.11 addendum)* | `installation_id:repository:file_path` | Test Intelligence | Release Risk Analysis | 30 days (compacted on key) |
 | `pr-analysis.completed` | `installation_id:repository:pr_number` | PR Analysis | Root Cause Analysis, GitHub Checks adapter | 30 days |
 | `root-cause.hypothesis-ready` | `installation_id:repository:pr_number` | Root Cause Analysis | GitHub Checks adapter, *Regression Prediction (Sub-stage 9.10 addendum — builds its historical-by-file-path projection from this)* | 30 days |
-| `regression-prediction.completed` *(Sub-stage 9.10 addendum)* | `installation_id:repository:pr_number` | Regression Prediction | GitHub Checks adapter | 30 days |
+| `regression-prediction.completed` *(Sub-stage 9.10 addendum)* | `installation_id:repository:pr_number` | Regression Prediction | GitHub Checks adapter, *Release Risk Analysis (Sub-stage 9.11 addendum)* | 30 days |
+| `release-risk.completed` *(Sub-stage 9.11 addendum)* | `installation_id:repository:pr_number` | Release Risk Analysis | (none yet — reserved for 9.12 Release Advisor) | 30 days |
 
 Short retention on raw ingestion topics (7 days) — they're a relay mechanism, not a
 system of record (Postgres is); longer retention on computed-result topics (30
@@ -680,6 +778,7 @@ built.
 | *(Addendum, launch-track Phase 1, 2026-07-07)* Started `run_relay_forever` per bounded-context outbox as a concurrent task in `worker.py`; added producer-side publish retry (`relay.py`) and consumer-side retry/dead-letter (`kafka.py`, new `{topic}.dlq` topics) | Leaving the relay unstarted and treating this as a future launch-readiness task; building a full backoff-with-persisted-state mechanism across process restarts | The relay was fully built and tested but never actually run — the entire event-driven pipeline was inert in any real deployment, a correctness gap, not a nice-to-have. A simpler poll-and-retry-per-cycle mechanism (no cross-restart backoff state) was chosen over a more elaborate one — a permanently-failing row retries every cycle rather than respecting a persisted backoff schedule, accepted as a known limitation given no alerting infra exists yet to page on it anyway | Staff Platform Engineer / user |
 | *(Addendum, Sub-stage 9.10)* Added a seventh schema, `regression_prediction`, shaped like an MVP analytical context (correlate, call LLM, publish) rather than a Test-Intelligence-style signal table; amended the already-frozen `root-cause.hypothesis-ready` payload to add nullable `suspected_file_path` | Joining `root_cause_analysis` as a second capability, read-time only (mirroring how 9.8 joined `dependency_analysis`) | Regression Prediction's dependencies span two different existing contexts (`test_intelligence`, `root_cause_analysis`), and its forward-looking "predict a future PR's regression risk from historical patterns" question shares no ubiquitous language with RCA's backward-looking "explain this one failure" — architecturally it's a much closer sibling of the MVP correlate-then-call-LLM contexts than of anything in Phase 2. See the ADR-0002 addendum for the full evaluation. | DB Architect / user |
 | *(Addendum, Sub-stage 9.7)* Added an eighth schema, `engineering_metrics`, with no outbox table and no new Kafka topic — consumes `ingestion.pr-changed`/`ingestion.ci-run-completed` directly as an independent consumer group; scoped to PR-flow + CI-health aggregation, not full DORA | Extending `pr_analysis`'s `pull_request` table with lifecycle timestamps; fabricating deployment/incident data to build full DORA now | A population-level flow statistic conflated into a per-PR-risk-score schema repeats the "everything dumped in one place" failure mode the Stage 9.4 threshold exists to catch; the raw `ingestion.pr-changed` payload already carries every field needed (`merged_at`/`closed_at`) verbatim, so no upstream context needed modification. Full DORA still has no real deployment ingestion source — fabricating one to unblock a roadmap item was rejected on the same evidence-before-speculation grounds as when 9.7 was first deferred. | DB Architect / user |
+| *(Addendum, Sub-stage 9.11)* Added a ninth schema, `release_risk_analysis`, fusing three signals spanning three different existing contexts into a deterministic (no-LLM) per-PR merge-readiness score; amended the already-frozen `test_intelligence` Stage 4 contract to add `test-intelligence.coverage-computed` | Joining `regression_prediction` as a second capability, read-time only; treating "release" as requiring real deployment data and deferring 9.11 like full DORA | Two of the three inputs (coverage, CI health) have nothing to do with Regression Prediction's own domain, so joining it would repeat the "everything dumped in one place" failure mode one context over; 9.11's own frozen dependency list (9.4/9.7/9.10) never actually required deployment data, so deferring further would under-build relative to what was already promised. "Release" is read as the persona's actual described pain — a merge-time decision — not a literal deployment artifact this system has no data for. | DB Architect / user |
 
 ## Architecture Review checklist (exit criteria)
 

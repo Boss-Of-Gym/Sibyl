@@ -182,11 +182,24 @@ no new Kafka topic at all (consumes the two raw ingestion topics directly).
 Full DORA remains deferred, now for the documented reason above rather than
 an open-ended "later." 274 tests (was 256), 92% overall coverage.
 
-**Phase 4 — Remaining Phase 3, dependencies now clear (9.7 and 9.10 both
-`APPROVED`):**
-- 9.11 Release Risk Analysis (needs 9.4 ✅, 9.7 ✅, 9.10 ✅)
-- 9.12 Release Advisor (needs 9.11)
-- 9.13 Incident Analysis (needs 9.9 ✅, 9.11)
+**Phase 4 — Remaining Phase 3, gated on 9.11:**
+- 9.11 Release Risk Analysis (needs 9.4 ✅, 9.7 ✅, 9.10 ✅). ✅ Done
+  2026-07-07. Dependencies span **three** different existing contexts
+  (Coverage Intelligence, Engineering Metrics, Regression Prediction) — a
+  stronger fan-in than 9.10's two-context case — so built as a new, ninth
+  bounded context (`release_risk_analysis`) fusing all three into a
+  deterministic (no LLM) per-PR merge-readiness score. "Release" is scoped
+  honestly to a merge-time decision, not a literal deployment/tag entity
+  this project has no ingestion source for — consistent with Stage 1's
+  actual persona evidence and the same honest-narrowing move as 9.7's own
+  DORA scoping. Required amending Test Intelligence's frozen Stage 4
+  contract to add `test-intelligence.coverage-computed` (no event
+  previously existed for coverage). See
+  `docs/09-implementation/9.11-release-risk-analysis/README.md` and the
+  ADR-0002 addendum for the full design. 296 tests (was 274), 92% overall
+  coverage.
+- 9.12 Release Advisor (needs 9.11 ✅)
+- 9.13 Incident Analysis (needs 9.9 ✅, 9.11 ✅)
 - 9.17 Knowledge Graph — kept last per the roadmap's own stated intent
   (synthesizes every other capability's output), even though its literal
   listed dependencies (9.9, 9.16) would technically clear earlier.

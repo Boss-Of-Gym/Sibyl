@@ -3,12 +3,13 @@
 **Ask before you ship.**
 
 > **Status: Stage 9 in progress — all 4 confirmed-MVP capabilities shipped,
-> plus all six Phase 2 capabilities.** Platform Foundation, PR Analysis,
-> Test Impact Analysis, Flaky Detection, Root Cause Analysis, CI/CD
-> Optimization, Coverage Intelligence, Dependency Analysis, API Evolution
-> Tracking, Regression Prediction, and Engineering Metrics are implemented
-> and tested — 274 tests, 92% coverage, against real Postgres/Redis/Kafka
-> plus contract-tested GitHub API calls. CI is live on GitHub Actions
+> plus all six Phase 2 capabilities, plus the first Phase 3 capability.**
+> Platform Foundation, PR Analysis, Test Impact Analysis, Flaky Detection,
+> Root Cause Analysis, CI/CD Optimization, Coverage Intelligence,
+> Dependency Analysis, API Evolution Tracking, Regression Prediction,
+> Engineering Metrics, and Release Risk Analysis are implemented and
+> tested — 296 tests, 92% coverage, against real Postgres/Redis/Kafka plus
+> contract-tested GitHub API calls. CI is live on GitHub Actions
 > (`docker compose up` also brings up Postgres/Kafka/Redis and the full
 > observability stack locally) — see
 > [Project status & process](#project-status--process). This project is built
@@ -106,7 +107,7 @@ sync with the project's internal engineering log.
 | 6 | Sequence Diagrams | ✅ Done |
 | 7 | Infrastructure | ✅ Done |
 | 8 | Testing Strategy | ✅ Done |
-| 9 | Implementation (17 capabilities, dependency-ordered) | 🔶 In progress — 9.0, 9.1, 9.2, 9.3, 9.9 done (all confirmed-MVP capabilities) plus 9.4, 9.5, 9.6, 9.7, 9.8, 9.10 (all six Phase 2) |
+| 9 | Implementation (17 capabilities, dependency-ordered) | 🔶 In progress — 9.0, 9.1, 9.2, 9.3, 9.9 done (all confirmed-MVP capabilities) plus 9.4, 9.5, 9.6, 9.7, 9.8, 9.10 (all six Phase 2) plus 9.11 (first Phase 3) |
 | 10 | Optimization | ⬜ Not started |
 
 *(This table is updated manually as each stage progresses.)*
@@ -122,8 +123,8 @@ document, not itself stage-gated.
 pyproject.toml       — Python 3.13 project: FastAPI, SQLAlchemy 2, Alembic, Ruff, MyPy (strict), pytest
 src/sibyl/           — application code: identity/, ingestion/, platform/ (shared kernel), api/,
                        pr_analysis/, test_intelligence/, root_cause_analysis/,
-                       dependency_analysis/, regression_prediction/, engineering_metrics/
-                       (bounded contexts)
+                       dependency_analysis/, regression_prediction/, engineering_metrics/,
+                       release_risk_analysis/ (bounded contexts)
 alembic/             — schema migrations, one independent branch per bounded-context schema
 tests/               — unit / contract (mocked HTTP) / integration (real Postgres/Redis/Kafka via testcontainers)
 docker-compose.yml   — local dev stack: Postgres, Kafka, Redis, full observability
