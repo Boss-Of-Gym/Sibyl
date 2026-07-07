@@ -19,8 +19,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
-      - run: uv run python -m eval.run_golden_set ${{ matrix.capability }}
-        if: ${{ secrets.LLM_PROVIDER_API_KEY != '' }}
+      - run: |
+          if [ -z "$LLM_PROVIDER_API_KEY" ]; then
+            echo "LLM_PROVIDER_API_KEY is not set — skipping golden-set eval."
+            exit 0
+          fi
+          uv run python -m eval.run_golden_set ${{ matrix.capability }}
         env:
           LLM_PROVIDER_API_KEY: ${{ secrets.LLM_PROVIDER_API_KEY }}
           LLM_PROVIDER_MODEL: ${{ secrets.LLM_PROVIDER_MODEL }}

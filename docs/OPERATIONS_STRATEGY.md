@@ -107,15 +107,21 @@ header, no further drift found.
    no live API needed), `eval/golden_sets/*.jsonl` (5 synthetic-but-realistic
    cases per capability), `eval/run_golden_set.py` (CLI harness), and
    `.github/workflows/llm-eval.yml` (weekly schedule + `workflow_dispatch` +
-   PR-triggered on adapter changes, guarded on `secrets.LLM_PROVIDER_API_KEY`
-   being set). **Two things genuinely blocked on real usage, not done here,
-   documented honestly in `eval/README.md` rather than faked:** the dataset
-   is synthetic (no real PR/failure history exists yet), and the harness's
-   live-API call path has never actually been exercised against a real key
-   in this environment — only its scoring logic is proven, via unit tests.
-   Verify end-to-end the first time a real `LLM_PROVIDER_API_KEY` exists.
-   Cost/latency budget tests (needing real historical telemetry) are
-   explicitly not attempted — same "no data yet" reasoning as Stage 10.
+   PR-triggered on adapter changes). The first real push of this workflow
+   immediately failed with 0 jobs run — GitHub Actions rejects `secrets`
+   referenced directly in a step's `if:` condition ("Unrecognized
+   named-value: 'secrets'"), confirmed via a manual `workflow_dispatch` API
+   call that surfaced the exact parse error. Fixed by moving the
+   `LLM_PROVIDER_API_KEY` presence check into the step's own shell script
+   instead of an `if:` condition. **Two things genuinely blocked on real
+   usage, not done here, documented honestly in `eval/README.md` rather than
+   faked:** the dataset is synthetic (no real PR/failure history exists
+   yet), and the harness's live-API call path has never actually been
+   exercised against a real key in this environment — only its scoring
+   logic is proven, via unit tests. Verify end-to-end the first time a real
+   `LLM_PROVIDER_API_KEY` exists. Cost/latency budget tests (needing real
+   historical telemetry) are explicitly not attempted — same "no data yet"
+   reasoning as Stage 10.
 4. ✅ Done 2026-07-07: `Dockerfile` added (multi-stage, `api`/`worker` targets
    via `--target`), `.dockerignore` added, both images built and verified
    locally. CI's `build` job will now build real images instead of skipping

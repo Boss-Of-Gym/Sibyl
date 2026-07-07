@@ -66,6 +66,9 @@ Exits non-zero if the pass rate falls below `PASS_RATE_GATE` (80%) in
 `.github/workflows/llm-eval.yml` runs this on a weekly schedule, on manual
 `workflow_dispatch`, and on any PR touching either `llm_reasoning.py`
 adapter — per Stage 8's "gate for any prompt or model-version change,"
-not "gate for every commit." Each step is guarded on
-`secrets.LLM_PROVIDER_API_KEY` being set, so the workflow doesn't show as
-perpetually failing before that secret is actually configured in the repo.
+not "gate for every commit." The run step checks `$LLM_PROVIDER_API_KEY` in
+its own shell script and exits 0 if unset, so the job shows as passing
+rather than perpetually failing before that secret is actually configured
+in the repo. (Note: GitHub Actions rejects `secrets` referenced directly in
+a step's `if:` condition — "Unrecognized named-value: 'secrets'" — so the
+check has to live inside `run:`, not in `if:`.)
