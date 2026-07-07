@@ -19,8 +19,9 @@ class GuardedReasoningPort:
         self._timeout_seconds = timeout_seconds
 
     async def assess_pr_risk(self, context: PrRiskContext) -> RiskAssessment:
-        return await guarded_llm_call(
+        result, latency_ms = await guarded_llm_call(
             call=lambda: self._delegate.assess_pr_risk(context),
             fallback=_fallback_assessment,
             timeout_seconds=self._timeout_seconds,
         )
+        return result.model_copy(update={"llm_latency_ms": latency_ms})

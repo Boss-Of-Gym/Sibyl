@@ -82,6 +82,7 @@ class RootCauseAnalysisRepository:
         suspected_file_path: str | None,
         llm_model: str,
         llm_tokens_used: int,
+        llm_latency_ms: int,
         computed_at: datetime,
     ) -> RootCauseHypothesis:
         hypothesis = RootCauseHypothesis(
@@ -92,6 +93,7 @@ class RootCauseAnalysisRepository:
             suspected_file_path=suspected_file_path,
             llm_model=llm_model,
             llm_tokens_used=llm_tokens_used,
+            llm_latency_ms=llm_latency_ms,
             computed_at=computed_at,
         )
         session.add(hypothesis)

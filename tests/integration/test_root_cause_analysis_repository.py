@@ -76,6 +76,7 @@ async def test_save_and_get_latest_hypothesis(db_session):
         suspected_file_path="src/x.py",
         llm_model="fake",
         llm_tokens_used=42,
+        llm_latency_ms=1500,
         computed_at=datetime.now(UTC),
     )
     await db_session.flush()
@@ -84,6 +85,7 @@ async def test_save_and_get_latest_hypothesis(db_session):
     assert hypothesis is not None
     assert hypothesis.confidence == 0.7
     assert hypothesis.llm_tokens_used == 42
+    assert hypothesis.llm_latency_ms == 1500
 
 
 async def test_upsert_pr_context_projection_creates_then_updates(db_session):

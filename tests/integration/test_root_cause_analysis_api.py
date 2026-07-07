@@ -55,6 +55,7 @@ async def test_get_root_cause_returns_200_when_hypothesis_ready(
         suspected_file_path="src/a.py",
         llm_model="fake",
         llm_tokens_used=10,
+        llm_latency_ms=500,
         computed_at=datetime.now(UTC),
     )
     await db_session.commit()

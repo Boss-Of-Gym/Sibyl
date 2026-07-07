@@ -68,6 +68,8 @@ class PrAnalysisRepository:
             rationale=assessment.rationale,
             contributing_factors=[f.model_dump() for f in assessment.contributing_factors],
             llm_model=assessment.llm_model,
+            llm_tokens_used=assessment.llm_tokens_used,
+            llm_latency_ms=assessment.llm_latency_ms,
             computed_at=computed_at,
         )
         session.add(record)

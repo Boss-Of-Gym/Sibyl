@@ -72,4 +72,5 @@ class AnthropicReasoningPort:
             rationale=output.rationale,
             contributing_factors=output.contributing_factors,
             llm_model=self._model,
+            llm_tokens_used=response.usage.input_tokens + response.usage.output_tokens,
         )

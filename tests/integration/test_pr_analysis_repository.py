@@ -55,6 +55,8 @@ async def test_add_and_fetch_latest_assessment(db_session):
         rationale="looks risky",
         contributing_factors=[ContributingFactor(factor="files_changed", weight=0.7)],
         llm_model="test-model",
+        llm_tokens_used=321,
+        llm_latency_ms=987,
     )
 
     await repository.add_risk_assessment(db_session, pr, assessment, datetime.now(UTC))
@@ -67,3 +69,5 @@ async def test_add_and_fetch_latest_assessment(db_session):
     assert fetched_pr.id == pr.id
     assert fetched_assessment.score == 0.7
     assert fetched_assessment.llm_model == "test-model"
+    assert fetched_assessment.llm_tokens_used == 321
+    assert fetched_assessment.llm_latency_ms == 987

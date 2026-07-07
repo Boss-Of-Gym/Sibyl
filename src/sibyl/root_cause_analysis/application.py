@@ -152,6 +152,7 @@ class RootCauseAnalysisService:
             suspected_file_path=explanation.suspected_file_path,
             llm_model=explanation.llm_model,
             llm_tokens_used=explanation.llm_tokens_used,
+            llm_latency_ms=explanation.llm_latency_ms,
             computed_at=now,
         )
 

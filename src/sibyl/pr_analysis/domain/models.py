@@ -26,6 +26,8 @@ class RiskAssessment(BaseModel):
     rationale: str
     contributing_factors: list[ContributingFactor]
     llm_model: str
+    llm_tokens_used: int = 0
+    llm_latency_ms: int = 0
     explanation_unavailable: bool = False
 
 

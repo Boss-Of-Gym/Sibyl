@@ -42,33 +42,109 @@ against — it is deliberately meant to change).
 ### Current snapshot (see `PROGRESS.md` `CURRENT STATE` for the live version)
 
 All 4 confirmed-MVP capabilities are `APPROVED` (9.0, 9.1, 9.2, 9.3, 9.9), plus
-the first four Phase 2 capabilities (9.5 CI/CD Optimization, 9.4 Coverage
-Intelligence, 9.6 Dependency Analysis, 9.8 API Evolution Tracking). 9
-sub-stages remain.
+four of five Phase 2 capabilities (9.5 CI/CD Optimization, 9.4 Coverage
+Intelligence, 9.6 Dependency Analysis, 9.8 API Evolution Tracking). Repo is
+public, CI verified green (2026-07-03). 9 Stage 9 sub-stages remain, plus
+Stage 10 in full.
 
-### Remaining Phase 2 (9.7) — sequencing recommendation
+### Full completion roadmap (recorded 2026-07-03, per-role phased plan)
 
-| Sub-stage | New integration cost | Recommended order | Why |
-|---|---|---|---|
-| 9.7 Engineering Metrics | High — needs deployment events, not currently ingested at all (no deployment webhook exists) | Defer until a real deploy pipeline exists to source events from (see §4) | DORA-style metrics need deployment frequency/lead-time data; building this before there's a real CI/CD release flow to measure would mean synthesizing fake deployment events, which defeats the point |
+This is the standing plan for everything between here and a genuinely
+complete project — kept here (not only in chat) so any future session can
+pick it up without re-deriving it. Re-validate against `PROGRESS.md`
+`CURRENT STATE` each time before acting on it — this section describes intent
+and sequencing, `PROGRESS.md` is what actually happened.
 
-9.7 is the only Phase 2 sub-stage left, and it's the one this table has
-recommended deferring since it first appeared — not because it's low
-priority, but because building it now would mean faking the exact data it's
-meant to measure. Once this is the *only* thing standing between Phase 2 and
-Phase 3, the real question becomes "start Phase 3" vs. "revisit whether 9.7's
-blocking condition (a real deploy pipeline) is now closer than it was" — a
-call for the user, not a scheduling default. Every sub-stage decision
-documented in `PROGRESS.md` so far (9.5, 9.4, 9.6, 9.8, each over their
-remaining Phase 2 siblings) picked lowest-new-integration-cost first, or —
-for 9.6 — the capability that unblocks the most other work; this table
-continues that reasoning explicitly.
+**Phase 0 — Documentation hygiene (Tech Writer / Engineering Manager).** ✅
+Done 2026-07-07: `docs/09-implementation/README.md`'s status header synced
+`NOT_STARTED` → `IN_PROGRESS`; audited every other stage README's status
+header, no further drift found.
 
-### Phase 3 (9.10–9.17)
+**Phase 1 — Close known Definition-of-Done gaps before new feature work**
+(higher priority than more capabilities — these make existing claims honest):
+1. ✅ Done 2026-07-07: `pr_analysis.pr_risk_assessment.llm_tokens_used`/
+   `llm_latency_ms` backfilled. Investigation before implementing corrected
+   the premise — the columns didn't exist at all (not "existed but
+   unpopulated"), and `root_cause_analysis` (the presumed reference
+   implementation) turned out to be missing `llm_latency_ms` too. Both fixed
+   together via one shared mechanism: `platform/reasoning_guard.guarded_llm_call`
+   now measures latency once, generically, for both LLM-calling contexts. See
+   `docs/09-implementation/9.1-pr-analysis/README.md` and
+   `docs/09-implementation/9.9-root-cause-analysis/README.md` Changelogs, and
+   the Stage 4 addendum in `docs/04-database/README.md`.
+2. Wire real OpenTelemetry spans/metrics into the worker consumer groups and
+   API handlers (Staff Platform Engineer) — every sub-stage so far has
+   deferred this explicitly; today the full Prometheus/Loki/Tempo/Grafana
+   stack is provisioned but emits nothing beyond structured logs. This is the
+   single biggest gap between "observability" as a claimed architectural
+   quality (`MASTER_PROMPT.md` §9) and what's actually demonstrated.
+3. Curate the golden-set eval dataset and wire the scheduled LLM-eval job
+   (Senior AI Engineer, Senior SDET) — a Stage 8 decision never executed.
+4. ✅ Done 2026-07-07: `Dockerfile` added (multi-stage, `api`/`worker` targets
+   via `--target`), `.dockerignore` added, both images built and verified
+   locally. CI's `build` job will now build real images instead of skipping
+   its one step via the `hashFiles('Dockerfile')` guard.
+5. ✅ Done 2026-07-07: License decided — Apache-2.0 (`LICENSE`,
+   `pyproject.toml`, root `README.md` updated).
+6. ✅ Done 2026-07-07: Branch protection applied to `main` — required status
+   checks (`lint`, `typecheck`, `test`, `security-scan`), `strict=true`,
+   `enforce_admins=false`, no required PR review (confirmed with the user:
+   this is a solo-maintainer repo with no second reviewer, so requiring PR
+   approval would have blocked direct pushes without unblocking anything in
+   return).
 
-Not evaluated in detail yet — per `docs/09-implementation/README.md`, Phase 3
-is built only after all Phase 2 sub-stages close. 9.17 (Knowledge Graph)
-depends effectively on all prior capabilities and is correctly last.
+Also discovered during Phase 1 (Dockerfile work), **not yet fixed** — a real
+gap for a future Phase 1 item or the OpenTelemetry pass above: `worker.py`
+has no HTTP server at all, but `deploy/helm/sibyl/templates/worker-deployment.yaml`
+configures `livenessProbe`/`readinessProbe` as `httpGet` checks against
+`metricsPort` (8001). This was flagged as a forward-reference risk back at
+Stage 7's close ("worth checking at Stage 9.0 that the paths match exactly
+what gets built") but never verified until now. Deploying the worker to real
+Kubernetes today would fail its probes immediately. Natural to fold into the
+OpenTelemetry pass (item 2) since a `/metrics` endpoint needs the same kind
+of lightweight HTTP server the worker currently lacks entirely.
+
+**Phase 2 — Phase 3 capabilities with no outstanding dependency**, buildable
+now in any order (Senior Python Developer/SDET build, Principal Software
+Engineer + Senior Security Engineer review, user sign-off — same loop as
+every prior sub-stage):
+- 9.10 Regression Prediction (needs 9.2, 9.9 — both `APPROVED`)
+- 9.14 AI Documentation (needs 9.0, 9.1 — both `APPROVED`)
+- 9.15 Test Generation (needs 9.2, 9.4 — both `APPROVED`)
+- 9.16 Architecture Insights (needs 9.6, 9.8 — both `APPROVED`)
+
+**Phase 3 — 9.7 Engineering Metrics** (Engineering Manager calls the timing).
+Still blocked on a real deployment-event source. The natural trigger is Phase
+5 (Launch) standing up a real deploy pipeline — at that point 9.7 unblocks
+with real data instead of synthesized events, which is the whole reason it's
+been deferred through every prior sub-stage decision.
+
+**Phase 4 — Remaining Phase 3, gated on 9.7/9.10:**
+- 9.11 Release Risk Analysis (needs 9.4 ✅, 9.7, 9.10)
+- 9.12 Release Advisor (needs 9.11)
+- 9.13 Incident Analysis (needs 9.9 ✅, 9.11)
+- 9.17 Knowledge Graph — kept last per the roadmap's own stated intent
+  (synthesizes every other capability's output), even though its literal
+  listed dependencies (9.9, 9.16) would technically clear earlier.
+
+**Phase 5 — Launch** (Open Source Maintainer, Staff Platform/DevOps Engineer,
+CEO sign-off) — full detail in §4 below: real GitHub App registration,
+secrets, staging rollout, first real end-to-end validation against live
+GitHub (never exercised — every test uses mocked HTTP or fake reasoning
+ports by design). **This phase needs real action from the user** (GitHub App
+account, cluster/domain) — it cannot be completed by writing code alone.
+
+**Phase 6 — Stage 10 Optimization** (Staff Backend/Platform Engineer, DB
+Architect, CTO review). Load/chaos testing can start against local/staging
+environments in parallel with Phases 2–5 — it doesn't need real production
+traffic. Only the cost-per-unit-of-value number needs an actual usage window
+after Phase 5.
+
+Phases 2 and 6 are not strictly sequential with each other or with Phase 5 —
+per "Entry criteria for Stage 10" below, Stage 10 can interleave with
+Phase 2/3 sub-stage work once something is actually running. Phase 1 (DoD
+gaps) and the license decision are the only genuinely blocking prerequisites
+before anything else in this list.
 
 ### Entry criteria for Stage 10 (Optimization)
 
@@ -89,14 +165,15 @@ Every remaining sub-stage follows the same loop used for
 
 ### Open items requiring an explicit decision (tracked here so they aren't lost)
 
-- **License** — undecided since Stage 0. Doesn't block Stage 1–9 work, but
-  does block launch (§4) and public repo publication. Needs a decision before
-  this repo is pushed anywhere public.
-- **`pr_analysis.pr_risk_assessment.llm_tokens_used`/`llm_latency_ms`** —
-  frozen in the Stage 4 ERD, never implemented in 9.1's shipped code,
-  discovered while building 9.9's equivalent column. Needs: backfill via a
-  new migration + code change, or amend the Stage 4 doc to match shipped
-  reality. Neither has happened yet.
+- ~~**License**~~ — resolved 2026-07-07: Apache-2.0.
+- ~~**`pr_analysis.pr_risk_assessment.llm_tokens_used`/`llm_latency_ms`**~~ —
+  resolved 2026-07-07: backfilled in both `pr_analysis` and (the also-gapped)
+  `root_cause_analysis`. See the Phase 1 roadmap entry above.
+- **`worker.py` has no HTTP server**, but the Helm chart's
+  `worker-deployment.yaml` configures `httpGet` liveness/readiness probes
+  against it — discovered 2026-07-07 while building the `Dockerfile`. Real
+  Kubernetes deployment of the worker would fail its probes today. Not yet
+  fixed — candidate for folding into the OpenTelemetry instrumentation pass.
 
 ## 2. Debugging strategy
 
@@ -266,8 +343,7 @@ deployment automation exists yet:
 
 ### Pre-launch checklist
 
-- [ ] **License decision** (blocks public publication — see Stage 0's open
-      blocker, still unresolved).
+- [x] **License decision** — Apache-2.0, decided 2026-07-07.
 - [ ] GitHub App registration (real GitHub App, not the fixture/mock used in
       tests) — needed before any real installation can authenticate.
 - [ ] Real secrets provisioned out-of-band into a Kubernetes `Secret` named
@@ -279,8 +355,13 @@ deployment automation exists yet:
       description" section already has a ready-to-use GitHub About
       description, topics list, and social-preview text — apply them when
       the repo is actually made public, don't re-draft them.
-- [ ] CI activated and green (§3).
-- [ ] `Dockerfile`s exist and `build` job produces real images.
+- [x] CI activated and green (§3).
+- [x] `Dockerfile`s exist — added 2026-07-07 (multi-stage, `api`/`worker`
+      targets, both built and verified locally). `build` job's CI step still
+      needs a real GitHub Actions run to confirm it builds there too (not yet
+      re-verified since this change) — and the worker's missing health
+      endpoint (noted in §1) means it isn't yet safely deployable even once
+      the image builds.
 
 ### Staging rollout
 

@@ -483,6 +483,16 @@ forgotten.
   real concern but a Stage 7/8 concern (secret-scanning before any external LLM
   call) — flagged here as a forward-reference, not solved in this stage.
 
+*(Addendum, launch-track Phase 1, 2026-07-07)* `PR_RISK_ASSESSMENT.llm_tokens_used`/
+`llm_latency_ms` and `ROOT_CAUSE_HYPOTHESIS.llm_latency_ms` — frozen in this
+stage's ERDs above since Stage 4, confirmed by direct investigation to have
+never been implemented in either shipped bounded context (not "columns exist
+but unpopulated" as earlier tracking assumed — the columns genuinely did not
+exist on `pr_risk_assessment`, and `root_cause_hypothesis` was itself missing
+`llm_latency_ms` despite being treated as the working reference). Both are now
+implemented: see `docs/09-implementation/9.1-pr-analysis/README.md` and
+`docs/09-implementation/9.9-root-cause-analysis/README.md` Changelogs.
+
 ## Decisions log
 
 | Decision | Alternatives considered | Rejected because | Owner role |

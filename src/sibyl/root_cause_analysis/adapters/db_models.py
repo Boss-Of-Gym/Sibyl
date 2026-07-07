@@ -59,6 +59,7 @@ class RootCauseHypothesis(Base):
     suspected_file_path: Mapped[str | None] = mapped_column(String, nullable=True)
     llm_model: Mapped[str] = mapped_column(String, nullable=False)
     llm_tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    llm_latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     failure_event: Mapped[FailureEvent] = relationship(back_populates="hypotheses")

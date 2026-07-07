@@ -36,6 +36,7 @@ class RootCauseExplanation(BaseModel):
     suspected_file_path: str | None = None
     llm_model: str
     llm_tokens_used: int = 0
+    llm_latency_ms: int = 0
     explanation_unavailable: bool = False
 
 

@@ -18,8 +18,9 @@ class GuardedReasoningPort:
         self._timeout_seconds = timeout_seconds
 
     async def explain_root_cause(self, context: RootCauseContext) -> RootCauseExplanation:
-        return await guarded_llm_call(
+        result, latency_ms = await guarded_llm_call(
             call=lambda: self._delegate.explain_root_cause(context),
             fallback=_fallback_explanation,
             timeout_seconds=self._timeout_seconds,
         )
+        return result.model_copy(update={"llm_latency_ms": latency_ms})

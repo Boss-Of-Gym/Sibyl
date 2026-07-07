@@ -44,6 +44,7 @@ async def test_successful_delegate_call_passes_through():
 
     assert result.llm_model == "delegate"
     assert result.explanation_unavailable is False
+    assert result.llm_latency_ms >= 0
 
 
 async def test_delegate_error_falls_back_without_raising():
@@ -52,6 +53,7 @@ async def test_delegate_error_falls_back_without_raising():
     result = await port.assess_pr_risk(CONTEXT)
 
     assert result.explanation_unavailable is True
+    assert result.llm_latency_ms >= 0
 
 
 async def test_delegate_timeout_falls_back_without_raising():
@@ -60,3 +62,4 @@ async def test_delegate_timeout_falls_back_without_raising():
     result = await port.assess_pr_risk(CONTEXT)
 
     assert result.explanation_unavailable is True
+    assert result.llm_latency_ms >= 40
