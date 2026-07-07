@@ -205,3 +205,73 @@ Consequence: `dependency_analysis` now owns two capabilities on one
 data model (manifest storage, breaking-change diffing) — the same
 "a few capabilities sharing one real domain fact" pattern already
 established and bounded (at four) inside Test Intelligence.
+
+## Addendum (Sub-stage 9.10, 2026-07-07): Regression Prediction is a new, seventh bounded context
+
+Unlike every prior addendum, 9.10's two dependencies —
+`test_intelligence` (9.2, Test Impact Analysis) and `root_cause_analysis`
+(9.9) — live in *different* existing contexts, so "join the context my
+dependencies already live in" isn't a single well-defined option the way it
+was for 9.4/9.5/9.8. Running the same ubiquitous-language evaluation
+framework against both candidates:
+
+- **Does it share language with Root Cause Analysis?** RCA answers "why did
+  *this specific* failure happen" — one event, backward-looking,
+  correlating three inputs that all describe the same failure. Regression
+  Prediction answers "how likely is *this new, not-yet-failed* PR to cause
+  a regression" — forward-looking, aggregating a *history* of past
+  hypotheses into a pattern, not correlating simultaneous facts about one
+  event. Different question, different temporal direction, about a
+  different subject (a future PR vs. a specific past failure). **Not the
+  same fact.**
+- **Does it share language with PR Analysis?** PR Analysis scores
+  "engineering risk" from diff *structure* (size, area, historical flaky
+  proximity) via LLM narrative judgment — no historical failure-pattern
+  correlation involved. Regression Prediction's score is explicitly
+  *grounded in* historical root-cause data, not diff structure alone.
+  Adjacent, but a genuinely different input methodology, not "the same
+  question asked to a different capability."
+
+Both comparisons land on "different fact, different question," which is the
+same signal that already correctly split Dependency Analysis (9.6) out on
+its own. Architecturally, Regression Prediction turns out to be a much
+closer structural sibling of the **MVP capabilities themselves**
+(PR Analysis, Root Cause Analysis) than of anything already in Phase 2:
+correlate multiple upstream signals into a bounded context of its own, call
+an LLM through the same `ReasoningPort`/`GuardedReasoningPort`/
+`AnthropicReasoningPort` shape, publish a completion event, post a GitHub
+Check — exactly Root Cause Analysis's own shape, aimed forward instead of
+backward. This also matches this project's own stated LLM thesis
+(`MASTER_PROMPT.md` §2, `docs/01-problem-discovery/README.md`'s "why an LLM
+specifically" section): synthesis across noisy, cross-system historical
+signal, not a bespoke statistical/ML model this project has no other
+precedent for building.
+
+Alternatives considered:
+- **Join `root_cause_analysis` as a second capability, read-time only (no
+  new ingestion), mirroring how API Evolution Tracking joined Dependency
+  Analysis.** Rejected: unlike 9.8 (which computes a diff from two rows
+  already owned by the *same* table), Regression Prediction's trigger
+  (`ingestion.pr-changed`) and its correlation subject (a *future* PR) are
+  not natural extensions of `root_cause_hypothesis`'s own domain language —
+  forcing it in would replicate the exact "everything analytical dumped in
+  one place" failure mode the Stage 9.4 threshold was built to catch,
+  just one context over.
+- **A bespoke statistical/ML prediction service outside the
+  ReasoningPort pattern.** Rejected: no ADR (including ADR-0005, this
+  project's LLM integration architecture) has ever established an ML
+  training/serving pattern, and introducing one for a single,
+  weakly-evidenced (market/competitive only) capability is unjustified
+  operational and architectural cost. The existing LLM-reasoning-over-
+  correlated-signal pattern already fits this problem shape.
+
+Consequence: a seventh bounded context and Postgres schema
+(`regression_prediction`), following the same pattern as every other
+context — own schema, own migration branch, no cross-schema FKs,
+`installation_id` scoping key, transactional outbox, its own
+`pull_request_regression_prediction`/`historical_regression_projection`
+tables, a `regression-prediction.completed` topic, and a GitHub Checks
+postback. Required one contract change to an already-frozen event: the
+`root-cause.hypothesis-ready` payload gained a `suspected_file_path` field
+(previously omitted) so Regression Prediction can build its historical
+index by file — logged as a Stage 4 addendum, not a silent change.

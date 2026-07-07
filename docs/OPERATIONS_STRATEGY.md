@@ -142,20 +142,38 @@ header, no further drift found.
 server at all, but the Helm chart's probes needed one.~~ Fixed 2026-07-07 as
 part of item 2 above.
 
-**Phase 2 — Phase 3 capabilities with no outstanding dependency**, buildable
-now in any order (Senior Python Developer/SDET build, Principal Software
-Engineer + Senior Security Engineer review, user sign-off — same loop as
-every prior sub-stage):
-- 9.10 Regression Prediction (needs 9.2, 9.9 — both `APPROVED`)
+**Phase 2 — remaining Stage-2-priority "Phase 2" capability: 9.10 Regression
+Prediction.** ✅ Done 2026-07-07. **Correction (same day, before starting)**:
+this item was previously (incorrectly) grouped below alongside the Phase 3
+capabilities as "no outstanding dependency, any order."
+`docs/09-implementation/README.md`'s own Priority column tags 9.10 as
+`Phase 2` — the same tier as 9.7, not `Phase 3` like 9.14/9.15/9.16. This
+project's own build-order rule is priority-first, dependency-order second
+("every Phase 2 sub-stage before any Phase 3 sub-stage, regardless of ID
+number") — unlike 9.7, 9.10 had no legitimate blocking reason to defer (its
+dependencies were fully built), so per that rule it was built here, before
+Phase 3, not lumped in with it. Confirmed with the user rather than silently
+reordered. Built as a new, seventh bounded context (`regression_prediction`)
+— see `docs/09-implementation/9.10-regression-prediction/README.md` and the
+ADR-0002 addendum for the full design; required amending the already-frozen
+`root-cause.hypothesis-ready` payload with a new `suspected_file_path`
+field. 256 tests (was 234), 92% overall coverage.
+
+**Phase 3 — the four true Phase 3 capabilities with no outstanding
+dependency**, buildable in any order once 9.10 closes (Senior Python
+Developer/SDET build, Principal Software Engineer + Senior Security
+Engineer review, user sign-off — same loop as every prior sub-stage):
 - 9.14 AI Documentation (needs 9.0, 9.1 — both `APPROVED`)
 - 9.15 Test Generation (needs 9.2, 9.4 — both `APPROVED`)
 - 9.16 Architecture Insights (needs 9.6, 9.8 — both `APPROVED`)
+- (9.10 Regression Prediction moved to Phase 2 above, per the correction.)
 
-**Phase 3 — 9.7 Engineering Metrics** (Engineering Manager calls the timing).
-Still blocked on a real deployment-event source. The natural trigger is Phase
-5 (Launch) standing up a real deploy pipeline — at that point 9.7 unblocks
-with real data instead of synthesized events, which is the whole reason it's
-been deferred through every prior sub-stage decision.
+**Phase 3.5 — 9.7 Engineering Metrics** (Engineering Manager calls the
+timing). Still blocked on a real deployment-event source, unlike 9.10 — this
+is why it's deferred and 9.10 isn't. The natural trigger is Phase 5 (Launch)
+standing up a real deploy pipeline — at that point 9.7 unblocks with real
+data instead of synthesized events, which is the whole reason it's been
+deferred through every prior sub-stage decision.
 
 **Phase 4 — Remaining Phase 3, gated on 9.7/9.10:**
 - 9.11 Release Risk Analysis (needs 9.4 ✅, 9.7, 9.10)

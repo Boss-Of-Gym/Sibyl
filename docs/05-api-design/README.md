@@ -108,6 +108,7 @@ is the first Phase 2 example of this.)*
 | `read:test-intelligence` | `GET .../test-impact`, `GET .../stability`, `GET .../ci-cd/slow-tests` *(9.5)*, `GET .../coverage/gaps` *(9.4)* |
 | `read:root-cause` | `GET .../root-cause` |
 | `read:dependency-analysis` *(9.6)* | `GET .../dependencies`, `GET .../dependencies/changes` *(9.8)* |
+| `read:regression-prediction` *(9.10)* | `GET .../regression-prediction` |
 | `admin:installations` | `GET /installations`, `GET /installations/{id}/repositories` |
 | `write:test-results` *(9.2)* | `POST /ingest/test-results` |
 | `write:coverage-reports` *(9.4)* | `POST /ingest/coverage-report` |

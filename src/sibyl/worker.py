@@ -31,6 +31,16 @@ from sibyl.pr_analysis.adapters.guarded_reasoning import GuardedReasoningPort
 from sibyl.pr_analysis.adapters.llm_reasoning import AnthropicReasoningPort
 from sibyl.pr_analysis.adapters.repository import PrAnalysisRepository
 from sibyl.pr_analysis.application import PrAnalysisService
+from sibyl.regression_prediction.adapters.checks_notifier import RegressionPredictionChecksNotifier
+from sibyl.regression_prediction.adapters.db_models import RegressionPredictionOutboxEvent
+from sibyl.regression_prediction.adapters.guarded_reasoning import (
+    GuardedReasoningPort as RegressionPredictionGuardedReasoningPort,
+)
+from sibyl.regression_prediction.adapters.llm_reasoning import (
+    AnthropicReasoningPort as RegressionPredictionAnthropicReasoningPort,
+)
+from sibyl.regression_prediction.adapters.repository import RegressionPredictionRepository
+from sibyl.regression_prediction.application import RegressionPredictionService
 from sibyl.root_cause_analysis.adapters.checks_notifier import RootCauseChecksNotifier
 from sibyl.root_cause_analysis.adapters.db_models import RootCauseAnalysisOutboxEvent
 from sibyl.root_cause_analysis.adapters.guarded_reasoning import (
@@ -245,6 +255,51 @@ def make_dependency_manifest_received_handler(
     return handle
 
 
+def make_regression_prediction_pr_changed_handler(
+    session_factory: SessionFactory, service: RegressionPredictionService
+) -> Handler:
+    async def handle(envelope: dict[str, Any]) -> None:
+        installation_id = uuid.UUID(envelope["installation_id"])
+        async with session_factory() as session:
+            await service.handle_pr_changed(session, installation_id, envelope["payload"])
+        logger.info(
+            "worker.regression_prediction.pr_changed_processed",
+            repository=envelope["payload"].get("repository"),
+        )
+
+    return handle
+
+
+def make_regression_prediction_hypothesis_ready_handler(
+    session_factory: SessionFactory, service: RegressionPredictionService
+) -> Handler:
+    async def handle(envelope: dict[str, Any]) -> None:
+        installation_id = uuid.UUID(envelope["installation_id"])
+        async with session_factory() as session:
+            await service.handle_hypothesis_ready(session, installation_id, envelope["payload"])
+        logger.info(
+            "worker.regression_prediction.hypothesis_projected",
+            repository=envelope["payload"].get("repository"),
+        )
+
+    return handle
+
+
+def make_regression_prediction_completed_handler(
+    session_factory: SessionFactory, notifier: RegressionPredictionChecksNotifier
+) -> Handler:
+    async def handle(envelope: dict[str, Any]) -> None:
+        installation_id = uuid.UUID(envelope["installation_id"])
+        async with session_factory() as session:
+            await notifier.handle_prediction_ready(session, installation_id, envelope["payload"])
+        logger.info(
+            "worker.regression_prediction_checks_notifier.processed",
+            repository=envelope["payload"].get("repository"),
+        )
+
+    return handle
+
+
 def make_dispatcher(handlers: dict[str, Handler], group_name: str) -> Handler:
     async def dispatch(envelope: dict[str, Any]) -> None:
         with tracer.start_as_current_span("consumer.process") as span:
@@ -263,7 +318,7 @@ def make_dispatcher(handlers: dict[str, Handler], group_name: str) -> Handler:
 
 def _build_checks_notifiers(
     settings: Settings, redis: Redis
-) -> tuple[PrAnalysisChecksNotifier, RootCauseChecksNotifier]:
+) -> tuple[PrAnalysisChecksNotifier, RootCauseChecksNotifier, RegressionPredictionChecksNotifier]:
     private_key = Path(settings.github_app_private_key_path).read_text()
     http_client = httpx.AsyncClient()
     authenticator = GitHubAppAuthenticator(settings.github_app_id, private_key, redis, http_client)
@@ -272,6 +327,7 @@ def _build_checks_notifiers(
     return (
         PrAnalysisChecksNotifier(authenticator, checks_client, installation_repository),
         RootCauseChecksNotifier(authenticator, checks_client, installation_repository),
+        RegressionPredictionChecksNotifier(authenticator, checks_client, installation_repository),
     )
 
 
@@ -331,6 +387,7 @@ async def run() -> None:
     pr_analysis_outbox_repository = OutboxRepository(PrAnalysisOutboxEvent)
     test_intelligence_outbox_repository = OutboxRepository(TestIntelligenceOutboxEvent)
     root_cause_analysis_outbox_repository = OutboxRepository(RootCauseAnalysisOutboxEvent)
+    regression_prediction_outbox_repository = OutboxRepository(RegressionPredictionOutboxEvent)
 
     reasoning_port = GuardedReasoningPort(
         AnthropicReasoningPort(settings.llm_provider_api_key, settings.llm_provider_model)
@@ -338,7 +395,9 @@ async def run() -> None:
     pr_analysis_service = PrAnalysisService(
         PrAnalysisRepository(), pr_analysis_outbox_repository, reasoning_port
     )
-    checks_notifier, root_cause_checks_notifier = _build_checks_notifiers(settings, redis)
+    checks_notifier, root_cause_checks_notifier, regression_prediction_checks_notifier = (
+        _build_checks_notifiers(settings, redis)
+    )
     test_intelligence_service = TestIntelligenceService(
         TestIntelligenceRepository(), test_intelligence_outbox_repository
     )
@@ -351,6 +410,17 @@ async def run() -> None:
         root_cause_reasoning_port,
     )
     dependency_analysis_service = DependencyAnalysisService(DependencyAnalysisRepository())
+
+    regression_prediction_reasoning_port = RegressionPredictionGuardedReasoningPort(
+        RegressionPredictionAnthropicReasoningPort(
+            settings.llm_provider_api_key, settings.llm_provider_model
+        )
+    )
+    regression_prediction_service = RegressionPredictionService(
+        RegressionPredictionRepository(),
+        regression_prediction_outbox_repository,
+        regression_prediction_reasoning_port,
+    )
 
     pr_analysis_repository = PrAnalysisRepository()
     pr_analysis_dispatcher = make_dispatcher(
@@ -365,8 +435,22 @@ async def run() -> None:
             "root-cause.hypothesis-ready": make_root_cause_hypothesis_ready_handler(
                 session_factory, root_cause_checks_notifier
             ),
+            "regression-prediction.completed": make_regression_prediction_completed_handler(
+                session_factory, regression_prediction_checks_notifier
+            ),
         },
         group_name="pr-analysis-worker",
+    )
+    regression_prediction_dispatcher = make_dispatcher(
+        {
+            "ingestion.pr-changed": make_regression_prediction_pr_changed_handler(
+                session_factory, regression_prediction_service
+            ),
+            "root-cause.hypothesis-ready": make_regression_prediction_hypothesis_ready_handler(
+                session_factory, regression_prediction_service
+            ),
+        },
+        group_name="regression-prediction-worker",
     )
     test_intelligence_dispatcher = make_dispatcher(
         {
@@ -422,6 +506,9 @@ async def run() -> None:
             run_relay_forever(
                 session_factory, root_cause_analysis_outbox_repository, kafka_producer
             ),
+            run_relay_forever(
+                session_factory, regression_prediction_outbox_repository, kafka_producer
+            ),
             _run_consumer_group(
                 "pr-analysis-worker",
                 [
@@ -429,9 +516,17 @@ async def run() -> None:
                     "pr-analysis.completed",
                     "test-intelligence.flaky-signal-updated",
                     "root-cause.hypothesis-ready",
+                    "regression-prediction.completed",
                 ],
                 settings.kafka_bootstrap_servers,
                 pr_analysis_dispatcher,
+                kafka_producer,
+            ),
+            _run_consumer_group(
+                "regression-prediction-worker",
+                ["ingestion.pr-changed", "root-cause.hypothesis-ready"],
+                settings.kafka_bootstrap_servers,
+                regression_prediction_dispatcher,
                 kafka_producer,
             ),
             _run_consumer_group(

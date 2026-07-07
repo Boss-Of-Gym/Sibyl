@@ -482,6 +482,52 @@ inside Dependency Analysis rather than becoming a new context, and the
 Stage 9.8 sub-stage doc for why "breaking" is deliberately limited to a
 semver major-version-bump heuristic, not literal OpenAPI-spec diffing.
 
+### 12. Regression Prediction — historical-index build + predict-and-postback (Sub-stage 9.10)
+
+```mermaid
+sequenceDiagram
+    participant RCA as Root Cause Analysis
+    participant RP as Regression Prediction
+    participant PG as Postgres (regression_prediction schema)
+    participant Reason as ReasoningPort
+    participant Ing as Ingestion
+    participant Checks as GitHub Checks adapter
+
+    Note over RCA,RP: Keeping the historical index current (runs independently, on every hypothesis)
+    RCA->>RP: root-cause.hypothesis-ready
+    activate RP
+    alt suspected_file_path is null
+        Note over RP: no signal to index — skip
+    else suspected_file_path present
+        RP->>PG: upsert historical_regression_projection (keyed by failure_event_id)
+    end
+    deactivate RP
+
+    Note over Ing,Checks: Predicting on a new PR (independent trigger, same worker)
+    Ing->>RP: ingestion.pr-changed
+    activate RP
+    RP->>PG: historical_regression_projection rows matching this PR's changed files
+    RP->>Reason: predict_regression(context) — see §6 for the shared llm.call span/fallback contract
+    Reason-->>RP: RegressionPrediction (probability, rationale, contributing signals)
+    RP->>PG: insert regression_prediction row
+    RP->>RP: publish regression-prediction.completed
+    deactivate RP
+    RP->>Checks: regression-prediction.completed
+    activate Checks
+    Checks->>Checks: conclusion = action_required if probability >= 0.6, else success (neutral if explanation_unavailable)
+    deactivate Checks
+```
+
+Two independent triggers into the same bounded context, not a multi-input
+correlation join like Root Cause Analysis (§4) — the historical index
+(left) and the prediction (right) don't need to arrive in any particular
+order relative to each other; the index is simply whatever has accumulated
+by the time a prediction is requested, same as Root Cause Analysis's own
+local projections. See the ADR-0002 addendum for why this is a new bounded
+context rather than joining Root Cause Analysis, and the Stage 4 addendum
+for why `root-cause.hypothesis-ready` needed a new `suspected_file_path`
+field to make the left-hand flow possible at all.
+
 *(Addendum, launch-track Phase 1, 2026-07-07)* Every diagram's observability
 annotations (checked off in this doc's own Architecture Review checklist
 below — "every diagram marks where tracing/metrics/logging are emitted")

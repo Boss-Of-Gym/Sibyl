@@ -370,6 +370,70 @@ no full-diff-content storage). This is the cheapest possible extension of an
 existing context — the strongest sign the ADR-0002 addendum's "join, don't
 split" call was right.
 
+*(Addendum, Sub-stage 9.10)* **`regression_prediction`** — a new, seventh
+schema (see the ADR-0002 addendum: this capability's two dependencies live
+in two *different* existing contexts, so it couldn't simply join either
+one). Shaped like an MVP analytical context (correlate signal, call an LLM,
+publish a result), not like a Test-Intelligence-style signal table:
+
+```mermaid
+erDiagram
+    REGRESSION_PREDICTION {
+        uuid id PK
+        uuid installation_id "scoping key, not a FK"
+        text repository
+        int pr_number
+        text head_sha
+        float regression_probability
+        text rationale
+        jsonb contributing_signals
+        text llm_model
+        int llm_tokens_used
+        int llm_latency_ms
+        timestamptz computed_at
+    }
+    HISTORICAL_REGRESSION_PROJECTION {
+        uuid failure_event_id PK
+        uuid installation_id "scoping key, not a FK"
+        text repository
+        text file_path
+        text hypothesis_text
+        float confidence
+        timestamptz occurred_at
+    }
+```
+
+`HISTORICAL_REGRESSION_PROJECTION` is Regression Prediction's own local copy
+of Root Cause Analysis's hypothesis history (consumed from
+`root-cause.hypothesis-ready`), keyed by `failure_event_id` — the same
+no-cross-schema-reads rule every other context follows, and the same
+"local projection of another context's events" pattern
+`pr_context_projection`/`test_impact_projection` already established for
+Root Cause Analysis itself. Only rows with a non-null suspected file path
+are stored — a hypothesis with no implicated file contributes no signal to
+"which files have historically caused regressions."
+
+**This required amending an already-frozen event contract**: the
+`root-cause.hypothesis-ready` payload (frozen at 9.9) never carried
+`suspected_file_path`, because nothing needed it until now. Added it as a
+nullable field — existing consumers (the GitHub Checks postback) ignore the
+new field; nothing downstream broke. Regression Prediction's own
+`llm_tokens_used`/`llm_latency_ms` were implemented from day one this time,
+unlike the first two contexts that needed the launch-track Phase 1 backfill
+described above.
+
+Unlike `dependency_manifest_snapshot`/`file_coverage_signal`,
+`regression_prediction` rows are **not** deduplicated/upserted by key — like
+`pr_risk_assessment`/`root_cause_hypothesis`, a new prediction is simply a
+new row, and "latest" is whichever has the newest `computed_at`. This
+context needed a genuinely new Kafka consumer group (`regression-prediction-worker`,
+subscribing to `ingestion.pr-changed` as its trigger and
+`root-cause.hypothesis-ready` to keep its historical projection current) and
+its own outbox (`regression-prediction.completed`, consumed by the
+`pr-analysis-worker` group's existing GitHub-Checks-postback dispatcher,
+alongside the postbacks it already handles for PR Analysis and Root Cause
+Analysis).
+
 ### Reliable event publishing: transactional outbox, not CDC
 
 Each context's schema includes its own `outbox_event` table (e.g.
@@ -396,14 +460,15 @@ handle at least the current and previous version during rollout.
 
 | Topic | Key | Producer | Consumers | Retention |
 |---|---|---|---|---|
-| `ingestion.pr-changed` | `installation_id:repository:pr_number` | Ingestion | Test Intelligence, PR Analysis | 7 days |
+| `ingestion.pr-changed` | `installation_id:repository:pr_number` | Ingestion | Test Intelligence, PR Analysis, *Regression Prediction (Sub-stage 9.10 addendum)* | 7 days |
 | `ingestion.ci-run-completed` | `installation_id:repository:commit_sha` | Ingestion — *`POST /ingest/test-results`, not the GitHub webhook (Stage 9.2 addendum below)* | Test Intelligence, *Root Cause Analysis (Stage 9.9 addendum below)* | 7 days |
 | `ingestion.coverage-report-received` *(Stage 9.4 addendum)* | `installation_id:repository:commit_sha` | Ingestion — `POST /ingest/coverage-report` | Test Intelligence | 7 days |
 | `ingestion.dependency-manifest-received` *(Stage 9.6 addendum)* | `installation_id:repository:commit_sha` | Ingestion — `POST /ingest/dependency-manifest` | Dependency Analysis | 7 days |
 | `test-intelligence.impact-computed` | `installation_id:repository:pr_number` | Test Intelligence | Root Cause Analysis | 30 days |
 | `test-intelligence.flaky-signal-updated` | `installation_id:repository:test_identifier` | Test Intelligence | PR Analysis, *Root Cause Analysis (Stage 9.9 addendum below)* | 30 days (compacted on key) |
 | `pr-analysis.completed` | `installation_id:repository:pr_number` | PR Analysis | Root Cause Analysis, GitHub Checks adapter | 30 days |
-| `root-cause.hypothesis-ready` | `installation_id:repository:pr_number` | Root Cause Analysis | GitHub Checks adapter | 30 days |
+| `root-cause.hypothesis-ready` | `installation_id:repository:pr_number` | Root Cause Analysis | GitHub Checks adapter, *Regression Prediction (Sub-stage 9.10 addendum — builds its historical-by-file-path projection from this)* | 30 days |
+| `regression-prediction.completed` *(Sub-stage 9.10 addendum)* | `installation_id:repository:pr_number` | Regression Prediction | GitHub Checks adapter | 30 days |
 
 Short retention on raw ingestion topics (7 days) — they're a relay mechanism, not a
 system of record (Postgres is); longer retention on computed-result topics (30
@@ -561,6 +626,7 @@ built.
 | *(Addendum, Stage 9.4)* Added `file_coverage_signal` to `test_intelligence` as a snapshot (not rolling-window) signal; added `ingestion.coverage-report-received` (new topic, `POST /ingest/coverage-report` producer) | Computing a rolling coverage trend like flakiness/duration; reusing `ingestion.ci-run-completed` instead of a dedicated coverage topic | Coverage percentage is a fact about a specific commit, not a classification that benefits from smoothing across history — a rolling window would answer a question nobody asked. A separate topic (rather than folding coverage into the existing test-results payload) keeps the two CI-job-facing contracts independently versionable — a CI job that only reports coverage shouldn't have to fabricate a per-test breakdown just to satisfy one schema. | DB Architect / user |
 | *(Addendum, Stage 9.6)* Added a sixth schema, `dependency_analysis`, with `dependency_manifest_snapshot` storing **history** (a row per commit, never overwritten) rather than current-state-only like every other signal table; added `ingestion.dependency-manifest-received` | Overwriting per-repository like `file_coverage_signal`; folding into an existing topic | A manifest snapshot's whole future value (diffing across commits for 9.8, API Evolution Tracking) requires keeping each commit's snapshot queryable — overwriting would destroy exactly the data a downstream diffing capability needs. This is a genuinely different persistence shape than the other three Test Intelligence signals, which is itself part of the evidence that this doesn't belong in that context (see the ADR-0002 addendum). | DB Architect / user |
 | *(Addendum, launch-track Phase 1, 2026-07-07)* Started `run_relay_forever` per bounded-context outbox as a concurrent task in `worker.py`; added producer-side publish retry (`relay.py`) and consumer-side retry/dead-letter (`kafka.py`, new `{topic}.dlq` topics) | Leaving the relay unstarted and treating this as a future launch-readiness task; building a full backoff-with-persisted-state mechanism across process restarts | The relay was fully built and tested but never actually run — the entire event-driven pipeline was inert in any real deployment, a correctness gap, not a nice-to-have. A simpler poll-and-retry-per-cycle mechanism (no cross-restart backoff state) was chosen over a more elaborate one — a permanently-failing row retries every cycle rather than respecting a persisted backoff schedule, accepted as a known limitation given no alerting infra exists yet to page on it anyway | Staff Platform Engineer / user |
+| *(Addendum, Sub-stage 9.10)* Added a seventh schema, `regression_prediction`, shaped like an MVP analytical context (correlate, call LLM, publish) rather than a Test-Intelligence-style signal table; amended the already-frozen `root-cause.hypothesis-ready` payload to add nullable `suspected_file_path` | Joining `root_cause_analysis` as a second capability, read-time only (mirroring how 9.8 joined `dependency_analysis`) | Regression Prediction's dependencies span two different existing contexts (`test_intelligence`, `root_cause_analysis`), and its forward-looking "predict a future PR's regression risk from historical patterns" question shares no ubiquitous language with RCA's backward-looking "explain this one failure" — architecturally it's a much closer sibling of the MVP correlate-then-call-LLM contexts than of anything in Phase 2. See the ADR-0002 addendum for the full evaluation. | DB Architect / user |
 
 ## Architecture Review checklist (exit criteria)
 

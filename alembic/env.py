@@ -14,6 +14,9 @@ from sibyl.ingestion.adapters import db_models as ingestion_models  # noqa: F401
 from sibyl.platform.config import get_settings
 from sibyl.platform.db import Base
 from sibyl.pr_analysis.adapters import db_models as pr_analysis_models  # noqa: F401
+from sibyl.regression_prediction.adapters import (
+    db_models as regression_prediction_models,  # noqa: F401
+)
 from sibyl.root_cause_analysis.adapters import db_models as root_cause_analysis_models  # noqa: F401
 from sibyl.test_intelligence.adapters import db_models as test_intelligence_models  # noqa: F401
 

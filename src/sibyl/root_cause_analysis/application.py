@@ -168,6 +168,7 @@ class RootCauseAnalysisService:
                 "test_identifier": failure_event.test_identifier,
                 "hypothesis_text": explanation.hypothesis_text,
                 "confidence": explanation.confidence,
+                "suspected_file_path": explanation.suspected_file_path,
                 "explanation_unavailable": explanation.explanation_unavailable,
             },
             occurred_at=now,

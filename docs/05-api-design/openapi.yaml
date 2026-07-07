@@ -456,6 +456,27 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /repositories/{owner}/{repo}/pulls/{prNumber}/regression-prediction:
+    get:
+      operationId: getRegressionPrediction
+      summary: Regression Prediction result for a pull request (Sub-stage 9.10)
+      tags: [regression-prediction]
+      security:
+        - bearerAuth: [read:regression-prediction]
+      parameters:
+        - $ref: "#/components/parameters/Owner"
+        - $ref: "#/components/parameters/Repo"
+        - $ref: "#/components/parameters/PrNumber"
+      responses:
+        "200":
+          description: The latest predicted regression probability for this pull request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegressionPrediction"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /installations:
     get:
       operationId: listInstallations
@@ -507,12 +528,13 @@ components:
       description: >
         JWT scoped per the RBAC catalog in `docs/05-api-design/README.md`
         (read:pr-analysis, read:test-intelligence, read:root-cause,
-        read:dependency-analysis, admin:installations, write:test-results,
-        write:coverage-reports, write:dependency-manifests). Most scopes are
-        issued after GitHub OAuth login; write:test-results,
-        write:coverage-reports, and write:dependency-manifests are issued to
-        CI jobs specifically (see the Stage 9.2, Stage 9.4, and Stage 9.6
-        addenda in `docs/05-api-design/README.md`).
+        read:dependency-analysis, read:regression-prediction,
+        admin:installations, write:test-results, write:coverage-reports,
+        write:dependency-manifests). Most scopes are issued after GitHub
+        OAuth login; write:test-results, write:coverage-reports, and
+        write:dependency-manifests are issued to CI jobs specifically (see
+        the Stage 9.2, Stage 9.4, and Stage 9.6 addenda in
+        `docs/05-api-design/README.md`).
 
   parameters:
     Owner:
@@ -855,6 +877,36 @@ components:
           type: string
           format: date-time
 
+    RegressionPrediction:
+      type: object
+      required: [prNumber, headSha, regressionProbability, rationale, computedAt]
+      properties:
+        prNumber:
+          type: integer
+        headSha:
+          type: string
+        regressionProbability:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        rationale:
+          type: string
+        contributingSignals:
+          type: array
+          items:
+            type: object
+            properties:
+              signal:
+                type: string
+              weight:
+                type: number
+        llmModel:
+          type: string
+        computedAt:
+          type: string
+          format: date-time
+
     Installation:
       type: object
       required: [id, organizationLogin, installedAt]
@@ -921,5 +973,11 @@ tags:
       Dependency Analysis bounded context (Stage 9.6 addendum) — a new bounded
       context, unlike CI/CD Optimization and Coverage Intelligence which both
       joined Test Intelligence; see the Stage 9.6 ADR-0002 addendum
+  - name: regression-prediction
+    description: >-
+      Regression Prediction bounded context (Sub-stage 9.10 addendum) — a new
+      bounded context, structurally closer to the MVP correlate-then-call-LLM
+      contexts than to anything in Phase 2; see the Sub-stage 9.10 ADR-0002
+      addendum
   - name: identity-access
     description: Identity/Access bounded context

@@ -16,6 +16,7 @@ from sibyl.platform.db import make_session_factory
 from sibyl.platform.errors import ProblemException
 from sibyl.platform.observability import configure_observability
 from sibyl.pr_analysis.api import router as pr_analysis_router
+from sibyl.regression_prediction.api import router as regression_prediction_router
 from sibyl.root_cause_analysis.api import router as root_cause_analysis_router
 from sibyl.test_intelligence.api import router as test_intelligence_router
 
@@ -44,6 +45,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(test_intelligence_router)
     app.include_router(root_cause_analysis_router)
     app.include_router(dependency_analysis_router)
+    app.include_router(regression_prediction_router)
 
     @app.exception_handler(ProblemException)
     async def problem_exception_handler(request: Request, exc: ProblemException) -> JSONResponse:
